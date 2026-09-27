@@ -1,10 +1,10 @@
-name: Build OpenWrt for JD Cloud AX1800 Pro (64GB eMMC + 4G IoT)
+name: Build Full IoT OpenWrt for JD Cloud AX1800 Pro
 
 on:
   workflow_dispatch:
 
 env:
-  REPO_URL: https://github.com/openwrt/openwrt.git
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
   REPO_BRANCH: openwrt-23.05
   TZ: Asia/Ho_Chi_Minh
 
@@ -23,9 +23,8 @@ jobs:
         sudo -E apt-get -qq update
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
-        df -h
 
-    - name: Initialize Compilation Environment
+    - name: Install Build Tools
       run: |
         sudo -E apt-get -qq update
         sudo -E apt-get -qq install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
@@ -34,35 +33,18 @@ jobs:
           libmpc-dev libmpfr-dev libreadline-dev libtool lrzsz mkisofs msmtp nano p7zip p7zip-full patch \
           pkgconf python3 python3-pip python3-ply python3-docutils qemu-utils re2c scons squashfs-tools \
           uglifyjs upx-ucl binfmt-support
-        sudo timedatectl set-timezone "$TZ"
 
-    - name: Clone OpenWrt Source
+    - name: Clone ImmortalWrt Source
       run: |
         git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
-        echo "OPENWRT_ROOT=$PWD/openwrt" >> $GITHUB_ENV
 
-    - name: Install Official Feeds
+    - name: Update & Install ImmortalWrt Feeds
       run: |
         cd openwrt
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    - name: Download Custom Packages Directly (Modemband, SMS, Neko, AdGuard, Argon)
-      run: |
-        cd openwrt/package
-        # 1. Theme Argon
-        git clone --depth 1 https://github.com/jerrykuku/luci-theme-argon.git
-        git clone --depth 1 https://github.com/jerrykuku/luci-app-argon-config.git
-        # 2. Khoa song 4G Modemband
-        git clone --depth 1 https://github.com/4fun/luci-app-modemband.git
-        # 3. Doc SMS va OTP
-        git clone --depth 1 https://github.com/koshev-ay/luci-app-sms-tool.git
-        # 4. AdGuard Home
-        git clone --depth 1 https://github.com/rufengsuixing/luci-app-adguardhome.git
-        # 5. Nekobox Singbox
-        git clone --depth 1 https://github.com/Thaolga/luci-app-nekobox.git
-
-    - name: Generate Defconfig for AX1800 Pro & 64GB eMMC
+    - name: Configure AX1800 Pro & All Requested Packages (Bilingual VI + EN)
       run: |
         cd openwrt
         cat << 'EOF' > .config
@@ -92,14 +74,12 @@ jobs:
         CONFIG_PACKAGE_usb-modeswitch=y
         CONFIG_PACKAGE_modemmanager=y
         CONFIG_PACKAGE_luci-app-modemmanager=y
-        CONFIG_PACKAGE_atinout=y
-        CONFIG_PACKAGE_picocom=y
         CONFIG_PACKAGE_luci-app-modemband=y
         CONFIG_PACKAGE_luci-app-sms-tool=y
-        CONFIG_PACKAGE_luci-app-nekobox=y
+        CONFIG_PACKAGE_atinout=y
+        CONFIG_PACKAGE_picocom=y
         CONFIG_PACKAGE_luci-app-adguardhome=y
-        CONFIG_PACKAGE_mwan3=y
-        CONFIG_PACKAGE_luci-app-mwan3=y
+        CONFIG_PACKAGE_luci-app-passwall=y
         CONFIG_PACKAGE_luci-app-dockerman=y
         CONFIG_PACKAGE_dockerd=y
         CONFIG_PACKAGE_docker=y
@@ -108,8 +88,11 @@ jobs:
         CONFIG_PACKAGE_mosquitto-ssl=y
         CONFIG_PACKAGE_luci=y
         CONFIG_PACKAGE_luci-theme-argon=y
-        CONFIG_PACKAGE_luci-app-argon-config=y
+        # Song ngu: Tieng Viet (vi) + Tieng Anh mac dinh (en)
         CONFIG_PACKAGE_luci-i18n-base-vi=y
+        CONFIG_PACKAGE_luci-i18n-base-en=y
+        CONFIG_PACKAGE_luci-i18n-dockerman-vi=y
+        CONFIG_PACKAGE_luci-i18n-firewall-vi=y
         CONFIG_PACKAGE_nano=y
         CONFIG_PACKAGE_htop=y
         CONFIG_PACKAGE_curl=y
@@ -141,7 +124,7 @@ jobs:
         EOF
         chmod +x openwrt/files/etc/uci-defaults/99-expand-emmc.sh
 
-    - name: Download Dependencies
+    - name: Download Sources
       run: |
         cd openwrt
         make download -j8
@@ -153,18 +136,9 @@ jobs:
         make -j$(nproc) || make -j1 V=s
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
-    - name: Organize Artifacts
-      id: organize
-      run: |
-        cd openwrt/bin/targets/*/*
-        rm -rf packages
-        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
-        echo "STATUS=success" >> $GITHUB_OUTPUT
-
-    - name: Upload Sysupgrade .bin to Artifacts
+    - name: Upload Firmware to Artifacts
       uses: actions/upload-artifact@v4
-      if: steps.organize.outputs.STATUS == 'success'
       with:
-        name: OpenWrt_JDCloud_AX1800Pro_64GB_${{ env.FILE_DATE }}
-        path: ${{ env.FIRMWARE }}/*sysupgrade.bin
+        name: OpenWrt_JDCloud_AX1800Pro_Full_${{ env.FILE_DATE }}
+        path: openwrt/bin/targets/qualcommax/ipq60xx/*sysupgrade.bin
         retention-days: 30
