@@ -2,21 +2,10 @@ name: Build OpenWrt for JD Cloud AX1800 Pro (64GB eMMC + 4G IoT)
 
 on:
   workflow_dispatch:
-    inputs:
-      openwrt_branch:
-        description: 'OpenWrt source branch'
-        required: true
-        default: 'master'
 
 env:
   REPO_URL: https://github.com/openwrt/openwrt.git
-  REPO_BRANCH: ${{ github.event.inputs.openwrt_branch || 'master' }}
-  FEEDS_CONF: feeds.conf.default
-  CONFIG_FILE: .config
-  DIY_P1_SH: diy-part1.sh
-  DIY_P2_SH: diy-part2.sh
-  UPLOAD_FIRMWARE: true
-  UPLOAD_RELEASE: true
+  REPO_BRANCH: openwrt-23.05
   TZ: Asia/Ho_Chi_Minh
 
 jobs:
@@ -47,22 +36,31 @@ jobs:
           uglifyjs upx-ucl binfmt-support
         sudo timedatectl set-timezone "$TZ"
 
-    - name: Clone Official OpenWrt Source
+    - name: Clone OpenWrt Source
       run: |
         git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
         echo "OPENWRT_ROOT=$PWD/openwrt" >> $GITHUB_ENV
 
-    - name: Inject Custom Feeds (diy-part1.sh)
+    - name: Install Official Feeds
       run: |
         cd openwrt
-        echo 'src-git argon https://github.com/jerrykuku/luci-theme-argon.git' >> feeds.conf.default
-        echo 'src-git argonconfig https://github.com/jerrykuku/luci-app-argon-config.git' >> feeds.conf.default
-        echo 'src-git modemband https://github.com/4fun/luci-app-modemband.git' >> feeds.conf.default
-        echo 'src-git smstool https://github.com/koshev-ay/luci-app-sms-tool.git' >> feeds.conf.default
-        echo 'src-git adguardhome https://github.com/rufengsuixing/luci-app-adguardhome.git' >> feeds.conf.default
-        echo 'src-git nekobox https://github.com/Thaolga/luci-app-nekobox.git' >> feeds.conf.default
         ./scripts/feeds update -a
         ./scripts/feeds install -a
+
+    - name: Download Custom Packages Directly (Modemband, SMS, Neko, AdGuard, Argon)
+      run: |
+        cd openwrt/package
+        # 1. Theme Argon
+        git clone --depth 1 https://github.com/jerrykuku/luci-theme-argon.git
+        git clone --depth 1 https://github.com/jerrykuku/luci-app-argon-config.git
+        # 2. Khoa song 4G Modemband
+        git clone --depth 1 https://github.com/4fun/luci-app-modemband.git
+        # 3. Doc SMS va OTP
+        git clone --depth 1 https://github.com/koshev-ay/luci-app-sms-tool.git
+        # 4. AdGuard Home
+        git clone --depth 1 https://github.com/rufengsuixing/luci-app-adguardhome.git
+        # 5. Nekobox Singbox
+        git clone --depth 1 https://github.com/Thaolga/luci-app-nekobox.git
 
     - name: Generate Defconfig for AX1800 Pro & 64GB eMMC
       run: |
@@ -98,6 +96,8 @@ jobs:
         CONFIG_PACKAGE_picocom=y
         CONFIG_PACKAGE_luci-app-modemband=y
         CONFIG_PACKAGE_luci-app-sms-tool=y
+        CONFIG_PACKAGE_luci-app-nekobox=y
+        CONFIG_PACKAGE_luci-app-adguardhome=y
         CONFIG_PACKAGE_mwan3=y
         CONFIG_PACKAGE_luci-app-mwan3=y
         CONFIG_PACKAGE_luci-app-dockerman=y
@@ -106,10 +106,9 @@ jobs:
         CONFIG_PACKAGE_docker-compose=y
         CONFIG_PACKAGE_tailscale=y
         CONFIG_PACKAGE_mosquitto-ssl=y
-        CONFIG_PACKAGE_luci-app-nekobox=y
-        CONFIG_PACKAGE_luci-app-adguardhome=y
         CONFIG_PACKAGE_luci=y
         CONFIG_PACKAGE_luci-theme-argon=y
+        CONFIG_PACKAGE_luci-app-argon-config=y
         CONFIG_PACKAGE_luci-i18n-base-vi=y
         CONFIG_PACKAGE_nano=y
         CONFIG_PACKAGE_htop=y
