@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    - name: Checkout
+    - name: Checkout Repository
       uses: actions/checkout@v4
 
     - name: Free Disk Space
@@ -30,7 +30,7 @@ jobs:
         sudo -E apt-get -qq clean
         df -h
 
-    - name: Install Compilation Tools
+    - name: Initialize Compilation Environment
       run: |
         sudo -E apt-get -qq update
         sudo -E apt-get -qq install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
@@ -41,23 +41,23 @@ jobs:
           uglifyjs upx-ucl binfmt-support
         sudo timedatectl set-timezone "$TZ"
 
-    - name: Clone OpenWrt Source
+    - name: Clone Official OpenWrt Source
       run: |
         git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
         echo "OPENWRT_ROOT=$PWD/openwrt" >> $GITHUB_ENV
 
-    - name: Update & Install Feeds
+    - name: Update & Install Feeds (Auto-pass errors)
       run: |
         cd openwrt
-        # Inject third-party packages
-        echo 'src-git argon https://github.com/jerrykuku/luci-theme-argon.git' >> feeds.conf.default
-        echo 'src-git modemband https://github.com/4fun/luci-app-modemband.git' >> feeds.conf.default
-        echo 'src-git smstool https://github.com/koshev-ay/luci-app-sms-tool.git' >> feeds.conf.default
-
-        ./scripts/feeds update -a
+        ./scripts/feeds update -a || true
         ./scripts/feeds install -a || true
 
-    - name: Generate .config for JD Cloud AX1800 Pro
+        # Clone truc tiep cac package vao package/ de khong bao gio bi loi feed
+        git clone --depth 1 https://github.com/jerrykuku/luci-theme-argon.git package/luci-theme-argon || true
+        git clone --depth 1 https://github.com/4fun/luci-app-modemband.git package/luci-app-modemband || true
+        git clone --depth 1 https://github.com/koshev-ay/luci-app-sms-tool.git package/luci-app-sms-tool || true
+
+    - name: Generate Defconfig for AX1800 Pro & 64GB eMMC
       run: |
         cd openwrt
         cat << 'EOF' > .config
@@ -109,7 +109,7 @@ jobs:
         EOF
         make defconfig
 
-    - name: Inject 64GB eMMC Auto-Expand Firstboot Script
+    - name: Inject 64GB eMMC Auto-Expand Script
       run: |
         mkdir -p openwrt/files/etc/uci-defaults
         cat << 'EOF' > openwrt/files/etc/uci-defaults/99-expand-emmc.sh
@@ -139,7 +139,7 @@ jobs:
         make download -j8
         find dl -size -1024c -exec rm -f {} \;
 
-    - name: Compile Firmware
+    - name: Compile Firmware (Qualcomm IPQ6000)
       run: |
         cd openwrt
         make -j$(nproc) || make -j1 V=s
