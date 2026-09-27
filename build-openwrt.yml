@@ -3,25 +3,14 @@ name: Build OpenWrt for JD Cloud AX1800 Pro (64GB eMMC + 4G IoT)
 on:
   workflow_dispatch:
     inputs:
-      ssh_debug:
-        description: 'SSH connection to Actions for debugging (true/false)'
-        required: false
-        default: 'false'
       openwrt_branch:
-        description: 'OpenWrt source branch (master, openwrt-23.05, etc.)'
+        description: 'OpenWrt branch'
         required: true
-        default: 'master'
+        default: 'openwrt-23.05'
 
 env:
   REPO_URL: https://github.com/openwrt/openwrt.git
-  REPO_BRANCH: ${{ github.event.inputs.openwrt_branch || 'master' }}
-  FEEDS_CONF: feeds.conf.default
-  CONFIG_FILE: .config
-  DIY_P1_SH: diy-part1.sh
-  DIY_P2_SH: diy-part2.sh
-  UPLOAD_BIN_DIR: false
-  UPLOAD_FIRMWARE: true
-  UPLOAD_RELEASE: true
+  REPO_BRANCH: ${{ github.event.inputs.openwrt_branch || 'openwrt-23.05' }}
   TZ: Asia/Ho_Chi_Minh
 
 jobs:
@@ -29,10 +18,10 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    - name: Checkout Repository
+    - name: Checkout
       uses: actions/checkout@v4
 
-    - name: Free Disk Space (Ubuntu Runner)
+    - name: Free Disk Space
       run: |
         sudo rm -rf /usr/share/dotnet /etc/mysql /var/lib/mysql /usr/local/lib/android 2>/dev/null || true
         sudo rm -rf /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" 2>/dev/null || true
@@ -41,7 +30,7 @@ jobs:
         sudo -E apt-get -qq clean
         df -h
 
-    - name: Initialize Compilation Environment & Build Tools
+    - name: Install Compilation Tools
       run: |
         sudo -E apt-get -qq update
         sudo -E apt-get -qq install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
@@ -52,124 +41,122 @@ jobs:
           uglifyjs upx-ucl binfmt-support
         sudo timedatectl set-timezone "$TZ"
 
-    - name: Clone Official OpenWrt Source
+    - name: Clone OpenWrt Source
       run: |
         git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
-        cd openwrt
-        echo "OPENWRT_ROOT=$PWD" >> $GITHUB_ENV
-
-    - name: Inject Custom Third-Party Feeds (diy-part1.sh)
-      run: |
-        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
-        chmod +x $DIY_P1_SH
-        cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P1_SH
+        echo "OPENWRT_ROOT=$PWD/openwrt" >> $GITHUB_ENV
 
     - name: Update & Install Feeds
       run: |
         cd openwrt
+        # Inject third-party packages
+        echo 'src-git argon https://github.com/jerrykuku/luci-theme-argon.git' >> feeds.conf.default
+        echo 'src-git modemband https://github.com/4fun/luci-app-modemband.git' >> feeds.conf.default
+        echo 'src-git smstool https://github.com/koshev-ay/luci-app-sms-tool.git' >> feeds.conf.default
+
         ./scripts/feeds update -a
-        ./scripts/feeds install -a
+        ./scripts/feeds install -a || true
 
-    - name: Apply Custom Scripts & Inject 64GB eMMC Auto-Expand (diy-part2.sh)
+    - name: Generate .config for JD Cloud AX1800 Pro
       run: |
-        # Copy custom files (uci-defaults scripts for 64GB eMMC expansion)
-        if [ -d "files" ]; then
-          mkdir -p openwrt/files
-          cp -r files/* openwrt/files/
-          chmod +x openwrt/files/etc/uci-defaults/* 2>/dev/null || true
-        fi
-        chmod +x $DIY_P2_SH
         cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P2_SH
-
-    - name: Load .config & Generate Defconfig
-      run: |
-        [ -e $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
-        cd openwrt
+        cat << 'EOF' > .config
+        CONFIG_TARGET_qualcommax=y
+        CONFIG_TARGET_qualcommax_ipq60xx=y
+        CONFIG_TARGET_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-07=y
+        CONFIG_TARGET_ROOTFS_PARTSIZE=1024
+        CONFIG_TARGET_ROOTFS_EXT4FS=y
+        CONFIG_TARGET_ROOTFS_SQUASHFS=y
+        CONFIG_PACKAGE_parted=y
+        CONFIG_PACKAGE_gdisk=y
+        CONFIG_PACKAGE_fdisk=y
+        CONFIG_PACKAGE_lsblk=y
+        CONFIG_PACKAGE_e2fsprogs=y
+        CONFIG_PACKAGE_resize2fs=y
+        CONFIG_PACKAGE_block-mount=y
+        CONFIG_PACKAGE_kmod-fs-ext4=y
+        CONFIG_PACKAGE_kmod-usb-core=y
+        CONFIG_PACKAGE_kmod-usb2=y
+        CONFIG_PACKAGE_kmod-usb3=y
+        CONFIG_PACKAGE_kmod-usb-net=y
+        CONFIG_PACKAGE_kmod-usb-net-rndis=y
+        CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y
+        CONFIG_PACKAGE_kmod-usb-net-cdc-mbim=y
+        CONFIG_PACKAGE_kmod-usb-serial=y
+        CONFIG_PACKAGE_kmod-usb-serial-option=y
+        CONFIG_PACKAGE_usb-modeswitch=y
+        CONFIG_PACKAGE_modemmanager=y
+        CONFIG_PACKAGE_luci-app-modemmanager=y
+        CONFIG_PACKAGE_atinout=y
+        CONFIG_PACKAGE_picocom=y
+        CONFIG_PACKAGE_luci-app-modemband=y
+        CONFIG_PACKAGE_luci-app-sms-tool=y
+        CONFIG_PACKAGE_mwan3=y
+        CONFIG_PACKAGE_luci-app-mwan3=y
+        CONFIG_PACKAGE_luci-app-dockerman=y
+        CONFIG_PACKAGE_dockerd=y
+        CONFIG_PACKAGE_docker=y
+        CONFIG_PACKAGE_docker-compose=y
+        CONFIG_PACKAGE_tailscale=y
+        CONFIG_PACKAGE_mosquitto-ssl=y
+        CONFIG_PACKAGE_luci=y
+        CONFIG_PACKAGE_luci-theme-argon=y
+        CONFIG_PACKAGE_luci-i18n-base-vi=y
+        CONFIG_PACKAGE_nano=y
+        CONFIG_PACKAGE_htop=y
+        CONFIG_PACKAGE_curl=y
+        CONFIG_PACKAGE_wget-ssl=y
+        EOF
         make defconfig
-        ./scripts/diffconfig.sh > diffconfig
-        cat diffconfig
 
-    - name: Download Dependency Packages (Parallel)
+    - name: Inject 64GB eMMC Auto-Expand Firstboot Script
+      run: |
+        mkdir -p openwrt/files/etc/uci-defaults
+        cat << 'EOF' > openwrt/files/etc/uci-defaults/99-expand-emmc.sh
+        #!/bin/sh
+        FLAG_FILE="/etc/emmc_expanded.done"
+        if [ -f "$FLAG_FILE" ]; then exit 0; fi
+        ROOT_DEV="/dev/mmcblk0"
+        if [ ! -b "$ROOT_DEV" ]; then exit 0; fi
+        PART_NUM=$(grep -E 'rootfs_data|rootfs' /proc/mtd /proc/partitions 2>/dev/null | awk '{print $4}' | grep -o '[0-9]*$' | tail -n 1)
+        parted -s "$ROOT_DEV" print ---pretend-input-tty <<FIX
+        Fix
+        FIX
+        if [ -n "$PART_NUM" ]; then
+            parted -s "$ROOT_DEV" resizepart "$PART_NUM" 100%
+        fi
+        partx -u "$ROOT_DEV" 2>/dev/null || blockdev --rereadpt "$ROOT_DEV" 2>/dev/null
+        resize2fs "${ROOT_DEV}p${PART_NUM}" 2>/dev/null || resize2fs /dev/root 2>/dev/null
+        mkdir -p /opt/docker /opt/bms-gateway
+        touch "$FLAG_FILE"
+        exit 0
+        EOF
+        chmod +x openwrt/files/etc/uci-defaults/99-expand-emmc.sh
+
+    - name: Download Dependencies
       run: |
         cd openwrt
         make download -j8
-        find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
-    - name: Compile OpenWrt Firmware (Qualcomm IPQ6000)
+    - name: Compile Firmware
       run: |
         cd openwrt
-        echo -e "$(nproc) thread compile"
-        make -j$(nproc) || make -j1 || make -j1 V=s
+        make -j$(nproc) || make -j1 V=s
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
-    - name: Organize Compiled .bin Firmware Files
+    - name: Organize Artifacts
       id: organize
-      if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
         cd openwrt/bin/targets/*/*
         rm -rf packages
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "STATUS=success" >> $GITHUB_OUTPUT
-        echo "Listing generated firmware artifacts:"
-        ls -la
 
-    - name: Upload Sysupgrade & Factory .bin to GitHub Actions Artifacts
+    - name: Upload Sysupgrade .bin to Artifacts
       uses: actions/upload-artifact@v4
-      if: steps.organize.outputs.STATUS == 'success' && !cancelled()
+      if: steps.organize.outputs.STATUS == 'success'
       with:
         name: OpenWrt_JDCloud_AX1800Pro_64GB_${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}/*sysupgrade.bin
-        if-no-files-found: error
         retention-days: 30
-
-    - name: Upload All Targets & Checksums (Backup Artifact)
-      uses: actions/upload-artifact@v4
-      if: steps.organize.outputs.STATUS == 'success' && !cancelled()
-      with:
-        name: OpenWrt_JDCloud_AX1800Pro_All_Files_${{ env.FILE_DATE }}
-        path: |
-          ${{ env.FIRMWARE }}/*
-          !${{ env.FIRMWARE }}/*.buildinfo
-          !${{ env.FIRMWARE }}/*.manifest
-        retention-days: 14
-
-    - name: Generate Firmware Release Tags & Notes
-      id: tag
-      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
-      run: |
-        echo "RELEASE_TAG=AX1800Pro-64GB-4G-$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
-        echo "RELEASE_DATE=$(date +"%Y-%m-%d %H:%M:%S")" >> $GITHUB_OUTPUT
-        cat << 'EOF' > release_notes.md
-        ## JD Cloud AX1800 Pro (Qualcomm IPQ6000) - OpenWrt Custom Build
-        - **Target SoC**: Qualcomm IPQ6000 (qualcommax/ipq60xx)
-        - **Model**: JD Cloud AX1800 Pro (`jdcloud_re-cs-07`)
-        - **Storage**: 64GB eMMC with automated RootFS & Overlay auto-expansion service (`99-expand-emmc.sh`)
-        - **4G/5G Cellular Engine**:
-          - Force LTE Only & Band Lock Web UI (`luci-app-modemband`)
-          - AT commands & Cell/PCI/EARFCN lock tools (`atinout`, `picocom`)
-          - SMS & USSD Web interface (`luci-app-sms-tool`)
-          - Multi-WAN failover & load balance (`mwan3`, `luci-app-mwan3`)
-        - **Edge IoT & BMS Stack**:
-          - Docker CE & Web UI (`luci-app-dockerman`, `dockerd`, `docker-compose`)
-          - Tailscale Mesh VPN
-          - Mosquitto MQTT SSL Broker & Client
-          - NekoBox (Sing-box core) + AdGuard Home
-          - Vietnamese UI Support (`luci-i18n-base-vi`)
-        EOF
-        echo "STATUS=success" >> $GITHUB_OUTPUT
-
-    - name: Publish GitHub Release with .bin Sysupgrade
-      uses: softprops/action-gh-release@v2
-      if: steps.tag.outputs.STATUS == 'success' && !cancelled()
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: ${{ steps.tag.outputs.RELEASE_TAG }}
-        name: OpenWrt JD Cloud AX1800 Pro 64GB [${{ steps.tag.outputs.RELEASE_DATE }}]
-        body_path: release_notes.md
-        files: |
-          ${{ env.FIRMWARE }}/*sysupgrade.bin
-          ${{ env.FIRMWARE }}/*sha256sums
