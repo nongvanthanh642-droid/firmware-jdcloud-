@@ -2,15 +2,10 @@ name: Build OpenWrt for JD Cloud AX1800 Pro (64GB eMMC + 4G IoT)
 
 on:
   workflow_dispatch:
-    inputs:
-      openwrt_branch:
-        description: 'OpenWrt branch'
-        required: true
-        default: 'openwrt-23.05'
 
 env:
   REPO_URL: https://github.com/openwrt/openwrt.git
-  REPO_BRANCH: ${{ github.event.inputs.openwrt_branch || 'openwrt-23.05' }}
+  REPO_BRANCH: openwrt-23.05
   TZ: Asia/Ho_Chi_Minh
 
 jobs:
@@ -30,7 +25,7 @@ jobs:
         sudo -E apt-get -qq clean
         df -h
 
-    - name: Initialize Compilation Environment
+    - name: Install Compilation Tools
       run: |
         sudo -E apt-get -qq update
         sudo -E apt-get -qq install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
@@ -41,18 +36,16 @@ jobs:
           uglifyjs upx-ucl binfmt-support
         sudo timedatectl set-timezone "$TZ"
 
-    - name: Clone Official OpenWrt Source
+    - name: Clone OpenWrt Source
       run: |
         git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
         echo "OPENWRT_ROOT=$PWD/openwrt" >> $GITHUB_ENV
 
-    - name: Update & Install Feeds (Auto-pass errors)
+    - name: Setup Feeds and Packages
       run: |
         cd openwrt
         ./scripts/feeds update -a || true
         ./scripts/feeds install -a || true
-
-        # Clone truc tiep cac package vao package/ de khong bao gio bi loi feed
         git clone --depth 1 https://github.com/jerrykuku/luci-theme-argon.git package/luci-theme-argon || true
         git clone --depth 1 https://github.com/4fun/luci-app-modemband.git package/luci-app-modemband || true
         git clone --depth 1 https://github.com/koshev-ay/luci-app-sms-tool.git package/luci-app-sms-tool || true
