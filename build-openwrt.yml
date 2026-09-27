@@ -1,11 +1,14 @@
-name: Build OpenWrt for JD Cloud AX1800 Pro (64GB eMMC + 4G IoT)
+name: Build Full IoT OpenWrt for JD Cloud AX1800 Pro
 
 on:
   workflow_dispatch:
 
 env:
-  REPO_URL: https://github.com/openwrt/openwrt.git
+  REPO_URL: https://github.com/immortalwrt/immortalwrt.git
   REPO_BRANCH: openwrt-23.05
+  CONFIG_FILE: .config
+  DIY_P1_SH: diy-part1.sh
+  DIY_P2_SH: diy-part2.sh
   TZ: Asia/Ho_Chi_Minh
 
 jobs:
@@ -18,14 +21,12 @@ jobs:
 
     - name: Free Disk Space
       run: |
-        sudo rm -rf /usr/share/dotnet /etc/mysql /var/lib/mysql /usr/local/lib/android 2>/dev/null || true
-        sudo rm -rf /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" 2>/dev/null || true
+        sudo rm -rf /usr/share/dotnet /etc/mysql /var/lib/mysql /usr/local/lib/android /opt/ghc /usr/local/share/boost 2>/dev/null || true
         sudo -E apt-get -qq update
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
-        df -h
 
-    - name: Install Compilation Tools
+    - name: Install Build Tools
       run: |
         sudo -E apt-get -qq update
         sudo -E apt-get -qq install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
@@ -36,97 +37,35 @@ jobs:
           uglifyjs upx-ucl binfmt-support
         sudo timedatectl set-timezone "$TZ"
 
-    - name: Clone OpenWrt Source
+    - name: Clone ImmortalWrt Source
       run: |
         git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
-        echo "OPENWRT_ROOT=$PWD/openwrt" >> $GITHUB_ENV
+        cd openwrt
+        echo "OPENWRT_ROOT=$PWD" >> $GITHUB_ENV
 
-    - name: Setup Feeds and Packages
+    - name: Update & Install ImmortalWrt Feeds
       run: |
         cd openwrt
-        ./scripts/feeds update -a || true
-        ./scripts/feeds install -a || true
-        git clone --depth 1 https://github.com/jerrykuku/luci-theme-argon.git package/luci-theme-argon || true
-        git clone --depth 1 https://github.com/4fun/luci-app-modemband.git package/luci-app-modemband || true
-        git clone --depth 1 https://github.com/koshev-ay/luci-app-sms-tool.git package/luci-app-sms-tool || true
+        [ -f ../$DIY_P1_SH ] && chmod +x ../$DIY_P1_SH && ../$DIY_P1_SH
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
 
-    - name: Generate Defconfig for AX1800 Pro & 64GB eMMC
+    - name: Configure AX1800 Pro & All Requested Packages (Bilingual VI + EN)
       run: |
         cd openwrt
-        cat << 'EOF' > .config
-        CONFIG_TARGET_qualcommax=y
-        CONFIG_TARGET_qualcommax_ipq60xx=y
-        CONFIG_TARGET_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-07=y
-        CONFIG_TARGET_ROOTFS_PARTSIZE=1024
-        CONFIG_TARGET_ROOTFS_EXT4FS=y
-        CONFIG_TARGET_ROOTFS_SQUASHFS=y
-        CONFIG_PACKAGE_parted=y
-        CONFIG_PACKAGE_gdisk=y
-        CONFIG_PACKAGE_fdisk=y
-        CONFIG_PACKAGE_lsblk=y
-        CONFIG_PACKAGE_e2fsprogs=y
-        CONFIG_PACKAGE_resize2fs=y
-        CONFIG_PACKAGE_block-mount=y
-        CONFIG_PACKAGE_kmod-fs-ext4=y
-        CONFIG_PACKAGE_kmod-usb-core=y
-        CONFIG_PACKAGE_kmod-usb2=y
-        CONFIG_PACKAGE_kmod-usb3=y
-        CONFIG_PACKAGE_kmod-usb-net=y
-        CONFIG_PACKAGE_kmod-usb-net-rndis=y
-        CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y
-        CONFIG_PACKAGE_kmod-usb-net-cdc-mbim=y
-        CONFIG_PACKAGE_kmod-usb-serial=y
-        CONFIG_PACKAGE_kmod-usb-serial-option=y
-        CONFIG_PACKAGE_usb-modeswitch=y
-        CONFIG_PACKAGE_modemmanager=y
-        CONFIG_PACKAGE_luci-app-modemmanager=y
-        CONFIG_PACKAGE_atinout=y
-        CONFIG_PACKAGE_picocom=y
-        CONFIG_PACKAGE_luci-app-modemband=y
-        CONFIG_PACKAGE_luci-app-sms-tool=y
-        CONFIG_PACKAGE_mwan3=y
-        CONFIG_PACKAGE_luci-app-mwan3=y
-        CONFIG_PACKAGE_luci-app-dockerman=y
-        CONFIG_PACKAGE_dockerd=y
-        CONFIG_PACKAGE_docker=y
-        CONFIG_PACKAGE_docker-compose=y
-        CONFIG_PACKAGE_tailscale=y
-        CONFIG_PACKAGE_mosquitto-ssl=y
-        CONFIG_PACKAGE_luci=y
-        CONFIG_PACKAGE_luci-theme-argon=y
-        CONFIG_PACKAGE_luci-i18n-base-vi=y
-        CONFIG_PACKAGE_nano=y
-        CONFIG_PACKAGE_htop=y
-        CONFIG_PACKAGE_curl=y
-        CONFIG_PACKAGE_wget-ssl=y
-        EOF
+        [ -f ../$CONFIG_FILE ] && cp ../$CONFIG_FILE .config
+        [ -f ../$DIY_P2_SH ] && chmod +x ../$DIY_P2_SH && ../$DIY_P2_SH
         make defconfig
 
     - name: Inject 64GB eMMC Auto-Expand Script
       run: |
-        mkdir -p openwrt/files/etc/uci-defaults
-        cat << 'EOF' > openwrt/files/etc/uci-defaults/99-expand-emmc.sh
-        #!/bin/sh
-        FLAG_FILE="/etc/emmc_expanded.done"
-        if [ -f "$FLAG_FILE" ]; then exit 0; fi
-        ROOT_DEV="/dev/mmcblk0"
-        if [ ! -b "$ROOT_DEV" ]; then exit 0; fi
-        PART_NUM=$(grep -E 'rootfs_data|rootfs' /proc/mtd /proc/partitions 2>/dev/null | awk '{print $4}' | grep -o '[0-9]*$' | tail -n 1)
-        parted -s "$ROOT_DEV" print ---pretend-input-tty <<FIX
-        Fix
-        FIX
-        if [ -n "$PART_NUM" ]; then
-            parted -s "$ROOT_DEV" resizepart "$PART_NUM" 100%
-        fi
-        partx -u "$ROOT_DEV" 2>/dev/null || blockdev --rereadpt "$ROOT_DEV" 2>/dev/null
-        resize2fs "${ROOT_DEV}p${PART_NUM}" 2>/dev/null || resize2fs /dev/root 2>/dev/null
-        mkdir -p /opt/docker /opt/bms-gateway
-        touch "$FLAG_FILE"
-        exit 0
-        EOF
-        chmod +x openwrt/files/etc/uci-defaults/99-expand-emmc.sh
+        cd openwrt
+        mkdir -p files/etc/uci-defaults
+        [ -f ../99-expand-emmc.sh ] && cp ../99-expand-emmc.sh files/etc/uci-defaults/
+        [ -f ../98-custom-settings.sh ] && cp ../98-custom-settings.sh files/etc/uci-defaults/
+        chmod +x files/etc/uci-defaults/* 2>/dev/null || true
 
-    - name: Download Dependencies
+    - name: Download Sources
       run: |
         cd openwrt
         make download -j8
@@ -135,21 +74,42 @@ jobs:
     - name: Compile Firmware (Qualcomm IPQ6000)
       run: |
         cd openwrt
-        make -j$(nproc) || make -j1 V=s
+        echo -e "$(nproc) thread compile"
+        make -j$(nproc) || make -j1 || make -j1 V=s
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
-    - name: Organize Artifacts
-      id: organize
+    - name: Package Firmware Files
+      id: package
       run: |
         cd openwrt/bin/targets/*/*
         rm -rf packages
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "STATUS=success" >> $GITHUB_OUTPUT
+        echo "DANH SÁCH FILE FIRMWARE ĐÃ TẠO:"
+        ls -la
 
-    - name: Upload Sysupgrade .bin to Artifacts
+    - name: Upload Firmware to Artifacts
       uses: actions/upload-artifact@v4
-      if: steps.organize.outputs.STATUS == 'success'
+      if: steps.package.outputs.STATUS == 'success' && !cancelled()
       with:
-        name: OpenWrt_JDCloud_AX1800Pro_64GB_${{ env.FILE_DATE }}
-        path: ${{ env.FIRMWARE }}/*sysupgrade.bin
+        name: ImmortalWrt_JDCloud_AX1800Pro_64GB_${{ env.FILE_DATE }}
+        path: ${{ env.FIRMWARE }}/*
         retention-days: 30
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      if: steps.package.outputs.STATUS == 'success' && !cancelled()
+      with:
+        tag_name: JDCloud-AX1800Pro-${{ env.FILE_DATE }}
+        name: Firmware JD Cloud AX1800 Pro 64GB eMMC (Bilingual VI + 4G IoT)
+        body: |
+          ### Firmware ImmortalWrt cho JD Cloud AX1800 Pro
+          - Chip: Qualcomm IPQ6000 (qualcommax/ipq60xx)
+          - Bộ nhớ: Đã tích hợp script tự động mở rộng 64GB eMMC (~58GB trống)
+          - Giao diện: Song ngữ Tiếng Việt + Tiếng Anh (Theme Argon)
+          - 4G LTE: Khóa băng tần luci-app-modemband, Khóa trạm BTS atinout, Đọc SMS OTP
+          - Proxy: NekoBox (Sing-box) + AdGuard Home
+          - IoT: Docker, Dockerman, Tailscale
+        files: ${{ env.FIRMWARE }}/*sysupgrade.bin
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
