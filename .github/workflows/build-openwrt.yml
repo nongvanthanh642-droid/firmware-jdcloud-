@@ -40,37 +40,53 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: Load Config
+      - name: Load Config (JD Cloud AX1800 Pro Full 4G + 64GB)
         run: |
-          [ -e .config ] && cp .config openwrt/.config || true
           cd openwrt
-          cat << 'EOF' >> .config
+          cat << 'EOF' > .config
           CONFIG_TARGET_qualcommax=y
           CONFIG_TARGET_qualcommax_ipq60xx=y
           CONFIG_TARGET_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-07=y
+
+          # Modem 4G LTE & Khóa trạm BTS, Khóa Band
           CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y
           CONFIG_PACKAGE_kmod-usb-serial-option=y
+          CONFIG_PACKAGE_kmod-usb-serial=y
           CONFIG_PACKAGE_uqmi=y
           CONFIG_PACKAGE_atinout=y
           CONFIG_PACKAGE_sms-tool=y
           CONFIG_PACKAGE_luci-app-modemband=y
+          CONFIG_PACKAGE_comgt=y
+
+          # Hỗ trợ nhận diện và mở rộng 64GB eMMC
+          CONFIG_PACKAGE_parted=y
+          CONFIG_PACKAGE_e2fsprogs=y
+          CONFIG_PACKAGE_resize2fs=y
+          CONFIG_PACKAGE_fdisk=y
+          CONFIG_PACKAGE_block-mount=y
+          CONFIG_PACKAGE_kmod-fs-ext4=y
+
+          # Giao diện Tiếng Việt & Theme Argon
+          CONFIG_PACKAGE_luci=y
           CONFIG_PACKAGE_luci-theme-argon=y
           CONFIG_PACKAGE_luci-i18n-base-vi=y
-          CONFIG_PACKAGE_parted=y
-          CONFIG_PACKAGE_resize2fs=y
+          CONFIG_PACKAGE_luci-i18n-firewall-vi=y
           EOF
           make defconfig
 
-      - name: Download packages
+      - name: Download package source
         run: |
           cd openwrt
           make download -j8
           find dl -size -1024c -exec rm -f {} \;
 
-      - name: Compile
+      - name: Compile Firmware (Chống lỗi dừng luồng)
+        id: compile
         run: |
           cd openwrt
+          echo "Bắt đầu biên dịch..."
           make -j$(nproc) || make -j1 V=s
+          echo "status=success" >> $GITHUB_OUTPUT
 
       - name: Prepare Files
         run: |
@@ -81,12 +97,14 @@ jobs:
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: AX1800Pro_Firmware
+          name: AX1800Pro_ImmortalWrt_Firmware
           path: release_firmware/*
 
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
+        if: steps.compile.outputs.status == 'success'
         with:
           tag_name: Build-${{ github.run_id }}
           name: Bản Rom AX1800 Pro 64GB eMMC (Build ${{ github.run_number }})
