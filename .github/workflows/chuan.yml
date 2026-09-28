@@ -1,155 +1,209 @@
-name: Build ImmortalWrt AX1800 Pro (Full LTE + 64GB)
+name: JDC-AX1800Pro-Super-CI
 
 on:
   workflow_dispatch:
+    inputs:
+      WRT_IP:
+        description: 'Địa chỉ IP Router mặc định'
+        required: false
+        default: '192.168.1.1'
+        type: string
+      WRT_SSID:
+        description: 'Tên WiFi phát ra mặc định'
+        required: false
+        default: 'JDCloud_AX1800_4G'
+        type: string
+      WRT_WORD:
+        description: 'Mật khẩu WiFi mặc định'
+        required: false
+        default: '12345678'
+        type: string
+      EXTRA_PACKAGES:
+        description: 'Gói cài thêm (cách nhau bằng dấu cách, ví dụ: luci-app-ttyd nano)'
+        required: false
+        default: ''
+        type: string
 
-permissions:
-  contents: write
+permissions: write-all
+
+env:
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  REPO_BRANCH: openwrt-23.05
+  DEVICE_NAME: JD Cloud AX1800 Pro (re-cs-07)
+  TZ: Asia/Ho_Chi_Minh
 
 jobs:
-  build:
+  Build:
     runs-on: ubuntu-22.04
+
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+    - name: Checkout
+      uses: actions/checkout@v4
 
-      # 1. DỌN SẠCH 35GB Ổ ĐĨA & TẠO 8GB SWAP CHỐNG TRÀN BỘ NHỚ
-      - name: Free Disk Space
-        uses: jlumbroso/free-disk-space@main
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          swap-storage: true
+    # 1. GỘP Ổ CỨNG 45GB CHỐNG TRÀN
+    - name: Combine Disks
+      uses: easimon/maximize-build-space@master
+      with:
+        swap-size-mb: 4096
+        temp-reserve-mb: 100
+        root-reserve-mb: 2048
 
-      - name: Install Build Dependencies
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
-          sudo apt-get -qq update
-          sudo apt-get -qq install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
-            gettext git libncurses-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget parted
-          sudo timedatectl set-timezone "Asia/Ho_Chi_Minh"
+    # 2. KHỞI TẠO MÔI TRƯỜNG BIÊN DỊCH
+    - name: Initialization Environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
+        sudo apt-get -qq update
+        sudo apt-get -qq install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
+          gettext git libncurses-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget parted
+        sudo timedatectl set-timezone "$TZ"
 
-      # 2. TẢI MÃ NGUỒN IMMORTALWRT 23.05
-      - name: Clone ImmortalWrt
-        run: |
-          git clone -b openwrt-23.05 --single-branch --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt
-          cd openwrt
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
+    # 3. TẢI MÃ NGUỒN IMMORTALWRT 23.05
+    - name: Clone Source Code
+      run: |
+        git clone -b $REPO_BRANCH --single-branch --depth 1 $REPO_URL openwrt
+        cd openwrt
+        echo "OPENWRT_PATH=$PWD" >> $GITHUB_ENV
 
-      # 3. NẠP CẤU HÌNH TỐI ƯU CHO ROUTER JD CLOUD AX1800 PRO
-      - name: Load Full Configuration
-        run: |
-          cd openwrt
-          cat << 'EOF' > .config
-          # ĐỊNH DANH ROUTER JD CLOUD AX1800 PRO (RE-CS-07)
-          CONFIG_TARGET_qualcommax=y
-          CONFIG_TARGET_qualcommax_ipq60xx=y
-          CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-07=y
-          CONFIG_TARGET_ROOTFS_SQUASHFS=y
+    # 4. CẬP NHẬT FEEDS VÀ GOLANG
+    - name: Update Feeds
+      run: |
+        cd $OPENWRT_PATH
+        ./scripts/feeds update -a
+        rm -rf feeds/packages/lang/golang
+        git clone https://github.com/sbwml/packages_lang_golang -b 23.x feeds/packages/lang/golang
+        ./scripts/feeds install -a
 
-          # 1. MODEM 4G LTE, KHÓA TRẠM BTS, KHÓA BAND & USB MODESWITCH
-          CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y
-          CONFIG_PACKAGE_kmod-usb-net-cdc-ether=y
-          CONFIG_PACKAGE_kmod-usb-net-rndis=y
-          CONFIG_PACKAGE_kmod-usb-serial-option=y
-          CONFIG_PACKAGE_kmod-usb-serial=y
-          CONFIG_PACKAGE_usb-modeswitch=y
-          CONFIG_PACKAGE_uqmi=y
-          CONFIG_PACKAGE_atinout=y
-          CONFIG_PACKAGE_sms-tool=y
-          CONFIG_PACKAGE_luci-app-modemband=y
-          CONFIG_PACKAGE_comgt=y
+    # 5. NẠP CẤU HÌNH ĐẦY ĐỦ 100% CHO QUALCOMM IPQ6000 AX1800 PRO
+    - name: Load Full Configuration
+      run: |
+        cd $OPENWRT_PATH
+        rm -f .config
+        cat << 'EOF' > .config
+        # QUALCOMM IPQ6000 AX1800 PRO (RE-CS-07)
+        CONFIG_TARGET_qualcommax=y
+        CONFIG_TARGET_qualcommax_ipq60xx=y
+        CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-07=y
+        CONFIG_TARGET_ROOTFS_SQUASHFS=y
 
-          # 2. BẢO MẬT & MẠNG
-          CONFIG_PACKAGE_ca-bundle=y
-          CONFIG_PACKAGE_ca-certificates=y
-          CONFIG_PACKAGE_curl=y
-          CONFIG_PACKAGE_ipset=y
-          CONFIG_PACKAGE_iptables-mod-tproxy=y
-          CONFIG_PACKAGE_kmod-tun=y
+        # MODEM 4G LTE, KHÓA TRẠM BTS, KHÓA BAND & USB MODESWITCH
+        CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y
+        CONFIG_PACKAGE_kmod-usb-net-cdc-ether=y
+        CONFIG_PACKAGE_kmod-usb-net-rndis=y
+        CONFIG_PACKAGE_kmod-usb-serial-option=y
+        CONFIG_PACKAGE_kmod-usb-serial=y
+        CONFIG_PACKAGE_usb-modeswitch=y
+        CONFIG_PACKAGE_uqmi=y
+        CONFIG_PACKAGE_atinout=y
+        CONFIG_PACKAGE_sms-tool=y
+        CONFIG_PACKAGE_luci-app-modemband=y
+        CONFIG_PACKAGE_comgt=y
 
-          # 3. QUẢN LÝ 64GB EMMC & ĐỊNH DẠNG EXT4
-          CONFIG_PACKAGE_parted=y
-          CONFIG_PACKAGE_e2fsprogs=y
-          CONFIG_PACKAGE_resize2fs=y
-          CONFIG_PACKAGE_fdisk=y
-          CONFIG_PACKAGE_block-mount=y
-          CONFIG_PACKAGE_kmod-fs-ext4=y
+        # MẠNG & CHỨNG CHỈ BẢO MẬT
+        CONFIG_PACKAGE_ca-bundle=y
+        CONFIG_PACKAGE_ca-certificates=y
+        CONFIG_PACKAGE_curl=y
+        CONFIG_PACKAGE_kmod-tun=y
+        CONFIG_PACKAGE_iptables-mod-tproxy=y
+        CONFIG_PACKAGE_ipset=y
 
-          # 4. GIAO DIỆN TIẾNG VIỆT & ARGON THEME
-          CONFIG_PACKAGE_luci=y
-          CONFIG_PACKAGE_luci-theme-argon=y
-          CONFIG_PACKAGE_luci-i18n-base-vi=y
-          CONFIG_PACKAGE_luci-i18n-firewall-vi=y
-          EOF
-          make defconfig
+        # QUẢN LÝ 64GB EMMC
+        CONFIG_PACKAGE_parted=y
+        CONFIG_PACKAGE_e2fsprogs=y
+        CONFIG_PACKAGE_resize2fs=y
+        CONFIG_PACKAGE_fdisk=y
+        CONFIG_PACKAGE_block-mount=y
+        CONFIG_PACKAGE_kmod-fs-ext4=y
 
-      # 4. SCRIPT TỰ ĐỘNG SỬA BẢNG GPT VÀ MỞ RỘNG 64GB EMMC
-      - name: Inject 64GB Auto-expand script
-        run: |
-          mkdir -p openwrt/package/base-files/files/etc/uci-defaults
-          cat << 'EOF' > openwrt/package/base-files/files/etc/uci-defaults/99-expand-emmc
-          #!/bin/sh
-          if [ ! -f /etc/emmc_expanded.done ]; then
-              logger -t emmc "Auto fixing GPT and expanding 64GB eMMC..."
-              parted -s /dev/mmcblk0 ---pretend-input-point-at-end print Fix 2>/dev/null || true
-              parted -s /dev/mmcblk0 resizepart 3 100% 2>/dev/null || true
-              resize2fs /dev/mmcblk0p3 2>/dev/null || true
-              touch /etc/emmc_expanded.done
-          fi
-          exit 0
-          EOF
-          chmod +x openwrt/package/base-files/files/etc/uci-defaults/99-expand-emmc
+        # GIAO DIỆN TIẾNG VIỆT & THEME ARGON
+        CONFIG_PACKAGE_luci=y
+        CONFIG_PACKAGE_luci-theme-argon=y
+        CONFIG_PACKAGE_luci-i18n-base-vi=y
+        CONFIG_PACKAGE_luci-i18n-firewall-vi=y
+        EOF
 
-      # 5. TẢI TRƯỚC TOÀN BỘ GÓI
-      - name: Download packages
-        run: |
-          cd openwrt
-          make download -j8
-          find dl -size -1024c -exec rm -f {} \;
+        # TỰ ĐỘNG THÊM GÓI NẾU BÁC GÕ Ở GIAO DIỆN
+        if [ -n "${{ inputs.EXTRA_PACKAGES }}" ]; then
+          for pkg in ${{ inputs.EXTRA_PACKAGES }}; do
+            echo "CONFIG_PACKAGE_$pkg=y" >> .config
+          done
+        fi
 
-      # 6. BIÊN DỊCH FIRMWARE (CÓ CỜ TIẾP TỤC ĐÓNG GÓI DÙ CÓ WARNING)
-      - name: Compile Firmware
-        run: |
-          cd openwrt
-          echo "Bắt đầu biên dịch..."
-          make -j$(nproc) || make -j1 V=s IGNORE_ERRORS=1 || true
+        make defconfig
 
-      # 7. GOM TOÀN BỘ FILE ROM RA THƯ MỤC XUẤT
-      - name: Prepare Files
-        run: |
-          mkdir -p release_firmware
-          cd openwrt/bin/targets/qualcommax/ipq60xx/
-          find . -maxdepth 1 -type f \( -name "*sysupgrade*" -o -name "*factory*" -o -name "*.bin" -o -name "*.tar" \) ! -name "*kernel*" -exec cp -f {} $GITHUB_WORKSPACE/release_firmware/ \;
-          cd $GITHUB_WORKSPACE
-          echo "=== CÁC FILE FIRMWARE ĐÃ TẠO ==="
-          ls -lh release_firmware/
+    # 6. TỰ ĐỘNG BƠM CẤU HÌNH TÊN WIFI, PASS WIFI, IP VÀ MỞ RỘNG 64GB
+    - name: Custom Settings (Auto WiFi + IP + 64GB)
+      run: |
+        mkdir -p $OPENWRT_PATH/package/base-files/files/etc/uci-defaults
+        cat << 'EOF' > $OPENWRT_PATH/package/base-files/files/etc/uci-defaults/99-custom-init
+        #!/bin/sh
+        # 1. Đổi IP Router theo thông số nhập
+        uci set network.lan.ipaddr='${{ inputs.WRT_IP }}'
 
-      # 8. XUẤT RA ARTIFACTS
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: ImmortalWrt_AX1800Pro_Firmware
-          path: release_firmware/*
+        # 2. Đổi tên và mật khẩu WiFi 2.4G & 5G
+        uci set wireless.@wifi-iface[0].ssid='${{ inputs.WRT_SSID }}'
+        uci set wireless.@wifi-iface[0].key='${{ inputs.WRT_WORD }}'
+        uci set wireless.@wifi-iface[0].encryption='psk2'
+        uci set wireless.@wifi-iface[1].ssid='${{ inputs.WRT_SSID }}_5G'
+        uci set wireless.@wifi-iface[1].key='${{ inputs.WRT_WORD }}'
+        uci set wireless.@wifi-iface[1].encryption='psk2'
+        uci commit wireless
+        uci commit network
 
-      # 9. ĐẨY THẲNG RA MỤC RELEASES ĐỂ TẢI VỀ
-      - name: Publish to GitHub Releases
-        uses: softprops/action-gh-release@v2
-        if: always()
-        with:
-          tag_name: Rom-AX1800Pro-${{ github.run_id }}
-          name: Bản Rom Full Trọn Gói AX1800 Pro 64GB (Build ${{ github.run_number }})
-          body: |
-            ### BẢN ROM ĐÃ SẴN SÀNG CHO ROUTER JD CLOUD AX1800 PRO:
-            - **Dòng máy:** JD Cloud AX1800 Pro (Qualcomm IPQ6000 / RE-CS-07)
-            - **Modem 4G LTE:** Khóa BTS, Khóa Band, Only 4G, Nhận diện USB Modem.
-            - **64GB eMMC:** Tự động mở rộng 100% dung lượng phân vùng.
-            - **Giao diện:** Tiếng Việt + Argon Theme.
-          files: release_firmware/*
+        # 3. Tự động sửa GPT và mở rộng 64GB eMMC
+        if [ ! -f /etc/emmc_expanded.done ]; then
+            logger -t emmc "Auto fixing GPT and expanding 64GB eMMC..."
+            parted -s /dev/mmcblk0 ---pretend-input-point-at-end print Fix 2>/dev/null || true
+            parted -s /dev/mmcblk0 resizepart 3 100% 2>/dev/null || true
+            resize2fs /dev/mmcblk0p3 2>/dev/null || true
+            touch /etc/emmc_expanded.done
+        fi
+        exit 0
+        EOF
+        chmod +x $OPENWRT_PATH/package/base-files/files/etc/uci-defaults/99-custom-init
+
+    # 7. TẢI TOÀN BỘ GÓI MÃ NGUỒN
+    - name: Download packages
+      run: |
+        cd $OPENWRT_PATH
+        make download -j8
+        find dl -size -1024c -exec rm -f {} \;
+
+    # 8. BIÊN DỊCH FIRMWARE QUALCOMM IPQ6000
+    - name: Compile Firmware
+      id: compile
+      run: |
+        cd $OPENWRT_PATH
+        echo -e "$(nproc) thread compile"
+        make -j$(nproc) || make -j1 || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT
+        echo "DATE=$(date +"%Y-%m-%d %H:%M:%S")" >> $GITHUB_ENV
+        echo "FILE_DATE=$(date +"%Y.%m.%d")" >> $GITHUB_ENV
+
+    # 9. GOM FILE ROM XUẤT XƯỞNG
+    - name: Organize Files
+      if: steps.compile.outputs.status == 'success'
+      run: |
+        cd $OPENWRT_PATH/bin/targets/*/*
+        rm -rf packages feeds.buildinfo version.buildinfo *kernel*
+        echo "FIRMWARE_PATH=$PWD" >> $GITHUB_ENV
+        echo "=== DANH SÁCH FILE FIRMWARE ĐÃ BIÊN DỊCH XONG ==="
+        ls -lh
+
+    # 10. ĐẨY FILE RA MỤC RELEASES
+    - name: Publish to GitHub Releases
+      if: steps.compile.outputs.status == 'success'
+      uses: ncipollo/release-action@v1
+      with:
+        name: Bản Rom JD Cloud AX1800 Pro (Build ${{ env.FILE_DATE }})
+        tag: AX1800Pro-${{ env.FILE_DATE }}-${{ github.run_number }}
+        token: ${{ secrets.GITHUB_TOKEN }}
+        artifacts: ${{ env.FIRMWARE_PATH }}/*
+        body: |
+          ### 🚀 BẢN FIRMWARE AX1800 PRO TỰ ĐỘNG CẤU HÌNH:
+          - **Thiết bị:** ${{ env.DEVICE_NAME }}
+          - **IP Router mặc định:** ${{ inputs.WRT_IP }}
+          - **Tên WiFi mặc định:** ${{ inputs.WRT_SSID }} (Mật khẩu: ${{ inputs.WRT_WORD }})
+          - **Modem 4G:** Khóa BTS, Khóa Band, Only 4G, Nhận USB Modem tự động.
+          - **Bộ nhớ:** Tự động mở rộng 100% dung lượng ổ 64GB eMMC.
