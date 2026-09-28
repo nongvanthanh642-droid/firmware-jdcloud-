@@ -34,18 +34,18 @@ jobs:
             gettext git libncurses-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget parted
           sudo timedatectl set-timezone "Asia/Ho_Chi_Minh"
 
-      # 2. TẢI MÃ NGUỒN IMMORTALWRT 23.05 + KHO GÓI NEKOBOX CHÍNH XÁC
+      # 2. TẢI MÃ NGUỒN IMMORTALWRT 23.05 + KHO PUBLIC KHÔNG BỊ HỎI USERNAME
       - name: Clone ImmortalWrt & Setup Feeds
         run: |
           git clone -b openwrt-23.05 --single-branch --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt
           cd openwrt
           
-          # Thêm kho NekoBox chính chủ
-          git clone --depth=1 https://github.com/Thaolga/luci-app-nekobox package/luci-app-nekobox
-
+          # Thêm feed chính thức của ImmortalWrt LuCI (Đã có sẵn NekoBox/Passwall/AdGuard)
+          sed -i 's/#src-git luci/src-git luci/g' feeds.conf.default
+          
           ./scripts/feeds update -a
           
-          # Nâng cấp golang mới để build Sing-box, AdGuard, Docker mượt mà
+          # Nâng cấp golang mới để build Sing-box, AdGuard mượt mà
           rm -rf feeds/packages/lang/golang
           git clone https://github.com/sbwml/packages_lang_golang -b 23.x feeds/packages/lang/golang
           
@@ -62,7 +62,7 @@ jobs:
           CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-07=y
           CONFIG_TARGET_ROOTFS_SQUASHFS=y
 
-          # Tiện ích mạng & Chứng chỉ bảo mật (Bắt buộc cho NekoBox/AdGuard)
+          # Tiện ích mạng & Chứng chỉ SSL
           CONFIG_PACKAGE_ca-bundle=y
           CONFIG_PACKAGE_ca-certificates=y
           CONFIG_PACKAGE_curl=y
@@ -80,14 +80,13 @@ jobs:
           CONFIG_PACKAGE_luci-app-modemband=y
           CONFIG_PACKAGE_comgt=y
 
-          # NekoBox (Sing-box) & Proxy TProxy
-          CONFIG_PACKAGE_luci-app-nekobox=y
+          # Sing-box & Core Định Tuyến VPN (NekoBox Core)
           CONFIG_PACKAGE_sing-box=y
           CONFIG_PACKAGE_kmod-tun=y
           CONFIG_PACKAGE_iptables-mod-tproxy=y
           CONFIG_PACKAGE_ipset=y
 
-          # AdGuard Home & Docker
+          # AdGuard Home & Quản lý thiết bị
           CONFIG_PACKAGE_adguardhome=y
           CONFIG_PACKAGE_luci-app-adguardhome=y
           CONFIG_PACKAGE_dockerd=y
@@ -119,9 +118,7 @@ jobs:
           #!/bin/sh
           if [ ! -f /etc/emmc_expanded.done ]; then
               logger -t emmc "Auto fixing GPT and expanding 64GB eMMC..."
-              # Sửa lỗi bảng GPT ở cuối ổ đĩa
               parted -s /dev/mmcblk0 ---pretend-input-point-at-end print Fix 2>/dev/null || true
-              # Mở rộng phân vùng thứ 3 lên 100% dung lượng
               parted -s /dev/mmcblk0 resizepart 3 100% 2>/dev/null || true
               resize2fs /dev/mmcblk0p3 2>/dev/null || true
               touch /etc/emmc_expanded.done
@@ -167,5 +164,5 @@ jobs:
           body: |
             ### BẢN ROM ĐÃ ĐÓNG GÓI THÀNH CÔNG:
             - **Thiết bị:** JD Cloud AX1800 Pro (Qualcomm IPQ6000 / RE-CS-07)
-            - **Tính năng:** Đầy đủ 4G LTE, Khóa BTS, Khóa Band, Only 4G, NekoBox (Sing-box), AdGuard Home, Docker và Tự mở rộng 64GB eMMC.
+            - **Tính năng:** Đầy đủ 4G LTE, Khóa BTS, Khóa Band, Only 4G, Sing-box Core, AdGuard Home, Docker và Tự mở rộng 64GB eMMC.
           files: release_firmware/*
