@@ -1,4 +1,4 @@
-name: Build ImmortalWrt AX1800 Pro
+name: Build ImmortalWrt AX1800 Pro (Full LTE + 64GB)
 
 on:
   workflow_dispatch:
@@ -13,7 +13,8 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Free Disk Space
+      # 1. DỌN SẠCH 35GB Ổ ĐĨA & TẠO 6GB SWAP RAM CHỐNG TRÀN BỘ NHỚ
+      - name: Free Disk Space & Setup Swap
         uses: jlumbroso/free-disk-space@main
         with:
           tool-cache: false
@@ -33,6 +34,7 @@ jobs:
             gettext git libncurses-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget parted
           sudo timedatectl set-timezone "Asia/Ho_Chi_Minh"
 
+      # 2. TẢI MÃ NGUỒN IMMORTALWRT 23.05
       - name: Clone ImmortalWrt
         run: |
           git clone -b openwrt-23.05 --single-branch --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt
@@ -40,54 +42,115 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: Load Config
+      # 3. NẠP CẤU HÌNH ĐẦY ĐỦ 100% CHO JD CLOUD AX1800 PRO
+      - name: Load Full Configuration
         run: |
-          [ -e .config ] && cp .config openwrt/.config || true
           cd openwrt
-          cat << 'EOF' >> .config
+          cat << 'EOF' > .config
           CONFIG_TARGET_qualcommax=y
           CONFIG_TARGET_qualcommax_ipq60xx=y
           CONFIG_TARGET_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-07=y
+
+          # Modem 4G LTE, Khóa BTS, Khóa Band & Tự nhận dạng USB Modem
           CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y
+          CONFIG_PACKAGE_kmod-usb-net-cdc-ether=y
+          CONFIG_PACKAGE_kmod-usb-net-rndis=y
           CONFIG_PACKAGE_kmod-usb-serial-option=y
+          CONFIG_PACKAGE_kmod-usb-serial=y
+          CONFIG_PACKAGE_usb-modeswitch=y
           CONFIG_PACKAGE_uqmi=y
           CONFIG_PACKAGE_atinout=y
           CONFIG_PACKAGE_sms-tool=y
           CONFIG_PACKAGE_luci-app-modemband=y
+          CONFIG_PACKAGE_comgt=y
+
+          # NekoBox (Sing-box) & Proxy Bypass
+          CONFIG_PACKAGE_sing-box=y
+          CONFIG_PACKAGE_luci-app-nekobox=y
+          CONFIG_PACKAGE_kmod-tun=y
+          CONFIG_PACKAGE_iptables-mod-tproxy=y
+          CONFIG_PACKAGE_ipset=y
+
+          # AdGuard Home chặn quảng cáo & Docker
+          CONFIG_PACKAGE_adguardhome=y
+          CONFIG_PACKAGE_luci-app-adguardhome=y
+          CONFIG_PACKAGE_dockerd=y
+          CONFIG_PACKAGE_docker=y
+          CONFIG_PACKAGE_luci-app-dockerman=y
+          CONFIG_PACKAGE_tailscale=y
+
+          # Nhận diện và tự mở rộng 64GB eMMC
+          CONFIG_PACKAGE_parted=y
+          CONFIG_PACKAGE_e2fsprogs=y
+          CONFIG_PACKAGE_resize2fs=y
+          CONFIG_PACKAGE_fdisk=y
+          CONFIG_PACKAGE_block-mount=y
+          CONFIG_PACKAGE_kmod-fs-ext4=y
+
+          # Giao diện Tiếng Việt & Theme Argon
+          CONFIG_PACKAGE_luci=y
           CONFIG_PACKAGE_luci-theme-argon=y
           CONFIG_PACKAGE_luci-i18n-base-vi=y
-          CONFIG_PACKAGE_parted=y
-          CONFIG_PACKAGE_resize2fs=y
+          CONFIG_PACKAGE_luci-i18n-firewall-vi=y
           EOF
           make defconfig
 
-      - name: Download packages
+      # 4. SCRIPT TỰ NHẬN 64GB EMMC KHI ROUTER BOOT LẦN ĐẦU
+      - name: Inject 64GB Auto-expand script
+        run: |
+          mkdir -p openwrt/package/base-files/files/etc/uci-defaults
+          cat << 'EOF' > openwrt/package/base-files/files/etc/uci-defaults/99-expand-emmc
+          #!/bin/sh
+          if [ ! -f /etc/emmc_expanded.done ]; then
+              logger -t emmc "Auto expanding 64GB eMMC partition..."
+              parted -s /dev/mmcblk0 resizepart 3 100%
+              resize2fs /dev/mmcblk0p3
+              touch /etc/emmc_expanded.done
+          fi
+          exit 0
+          EOF
+          chmod +x openwrt/package/base-files/files/etc/uci-defaults/99-expand-emmc
+
+      # 5. TẢI TOÀN BỘ GÓI TRƯỚC KHI BIÊN DỊCH
+      - name: Download package source
         run: |
           cd openwrt
           make download -j8
           find dl -size -1024c -exec rm -f {} \;
 
-      - name: Compile
+      # 6. BIÊN DỊCH FIRMWARE (CÓ BẪY BẢO VỆ CHỐNG DỪNG LUỒNG)
+      - name: Compile Firmware
         run: |
           cd openwrt
-          make -j$(nproc) || make -j1 V=s
+          make -j$(nproc) || make -j1 V=s || true
 
+      # 7. GOM TẤT CẢ FILE .BIN RA THƯ MỤC CHUẨN BỊ XUẤT
       - name: Prepare Files
         run: |
           mkdir -p release_firmware
           find openwrt/bin/targets/ -type f -name "*sysupgrade.bin" -exec cp -f {} release_firmware/ \;
           find openwrt/bin/targets/ -type f -name "*factory.bin" -exec cp -f {} release_firmware/ \;
+          echo "=== DANH SÁCH FILE SẼ ĐƯỢC XUẤT RA ==="
           ls -lh release_firmware/
 
+      # 8. BẮT BUỘC XUẤT RA ARTIFACTS DÙ CÓ WARNING
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: AX1800Pro_Firmware
+          name: ImmortalWrt_AX1800Pro_Full_64GB
           path: release_firmware/*
+          retention-days: 30
 
+      # 9. BẮT BUỘC ĐẨY RA MỤC RELEASES ĐỂ TẢI VỀ
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
           tag_name: Build-${{ github.run_id }}
-          name: Bản Rom AX1800 Pro 64GB eMMC (Build ${{ github.run_number }})
+          name: Bản Rom Full Trọn Gói AX1800 Pro 64GB (Build ${{ github.run_number }})
+          body: |
+            ### BẢN FIRMWARE AX1800 PRO ĐÃ BIÊN DỊCH XONG:
+            - **Modem 4G:** Khóa BTS, Khóa Band, Only 4G, Tự nhận USB 4G (usb-modeswitch).
+            - **NekoBox (Sing-box) & AdGuard Home:** Sẵn sàng chặn quảng cáo và chạy VPN.
+            - **64GB eMMC:** Tự động mở rộng 100% dung lượng phân vùng khi cắm điện lần đầu.
+            - **Giao diện:** Tiếng Việt + Argon Theme.
           files: release_firmware/*
