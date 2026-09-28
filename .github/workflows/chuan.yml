@@ -1,4 +1,4 @@
-name: Build ImmortalWrt AX1800 Pro (FULL ALL PACKAGES)
+name: Build ImmortalWrt AX1800 Pro (Full LTE + 64GB)
 
 on:
   workflow_dispatch:
@@ -13,7 +13,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 1. DỌN SẠCH 35GB Ổ CỨNG TRÁNH TRÀN BỘ NHỚ
+      # 1. DỌN SẠCH 35GB Ổ ĐĨA & TẠO SWAP CHỐNG ĐỨNG
       - name: Free Disk Space
         uses: jlumbroso/free-disk-space@main
         with:
@@ -34,51 +34,52 @@ jobs:
             gettext git libncurses-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget parted
           sudo timedatectl set-timezone "Asia/Ho_Chi_Minh"
 
-      # 2. TẢI MÃ NGUỒN IMMORTALWRT 23.05 (HỖ TRỢ TỐT NHẤT CHO IPQ6000)
-      - name: Clone ImmortalWrt Source
+      # 2. TẢI MÃ NGUỒN IMMORTALWRT 23.05
+      - name: Clone ImmortalWrt
         run: |
           git clone -b openwrt-23.05 --single-branch --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt
           cd openwrt
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      # 3. NẠP ĐẦY ĐỦ 100% CÁC TÍNH NĂNG VÀO .CONFIG
-      - name: Inject Full Features Configuration
+      # 3. NẠP CẤU HÌNH IPQ6000 AX1800 PRO
+      - name: Load Full Configuration
         run: |
           cd openwrt
           cat << 'EOF' > .config
-          # CHIP QUALCOMM IPQ6000 - ROUTER JD CLOUD AX1800 PRO
           CONFIG_TARGET_qualcommax=y
           CONFIG_TARGET_qualcommax_ipq60xx=y
           CONFIG_TARGET_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-07=y
 
-          # 1. MODEM 4G LTE & KHÓA TRẠM BTS, KHÓA BAND
+          # 4G LTE & Tự nhận dạng Modem USB
           CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y
+          CONFIG_PACKAGE_kmod-usb-net-cdc-ether=y
+          CONFIG_PACKAGE_kmod-usb-net-rndis=y
           CONFIG_PACKAGE_kmod-usb-serial-option=y
           CONFIG_PACKAGE_kmod-usb-serial=y
+          CONFIG_PACKAGE_usb-modeswitch=y
           CONFIG_PACKAGE_uqmi=y
           CONFIG_PACKAGE_atinout=y
           CONFIG_PACKAGE_sms-tool=y
           CONFIG_PACKAGE_luci-app-modemband=y
           CONFIG_PACKAGE_comgt=y
 
-          # 2. NEKOBOX (SING-BOX) & PROXY ĐỊNH TUYẾN
-          CONFIG_PACKAGE_luci-app-nekobox=y
+          # NekoBox (Sing-box) & Proxy
           CONFIG_PACKAGE_sing-box=y
+          CONFIG_PACKAGE_luci-app-nekobox=y
           CONFIG_PACKAGE_kmod-tun=y
           CONFIG_PACKAGE_iptables-mod-tproxy=y
-          CONFIG_PACKAGE_kmod-ipt-tproxy=y
           CONFIG_PACKAGE_ipset=y
 
-          # 3. ADGUARD HOME CHẶN QUẢNG CÁO & DOCKER
-          CONFIG_PACKAGE_luci-app-adguardhome=y
+          # AdGuard Home & Quản lý thiết bị
           CONFIG_PACKAGE_adguardhome=y
+          CONFIG_PACKAGE_luci-app-adguardhome=y
           CONFIG_PACKAGE_dockerd=y
           CONFIG_PACKAGE_docker=y
           CONFIG_PACKAGE_luci-app-dockerman=y
           CONFIG_PACKAGE_tailscale=y
 
-          # 4. MỞ RỘNG 64GB EMMC & ĐỊNH DẠNG EXT4
+          # 64GB eMMC & Định dạng Ext4
           CONFIG_PACKAGE_parted=y
           CONFIG_PACKAGE_e2fsprogs=y
           CONFIG_PACKAGE_resize2fs=y
@@ -86,17 +87,16 @@ jobs:
           CONFIG_PACKAGE_block-mount=y
           CONFIG_PACKAGE_kmod-fs-ext4=y
 
-          # 5. GIAO DIỆN ARGON + TIẾNG VIỆT
+          # Giao diện Tiếng Việt & Argon
           CONFIG_PACKAGE_luci=y
           CONFIG_PACKAGE_luci-theme-argon=y
-          CONFIG_PACKAGE_luci-app-argon-config=y
           CONFIG_PACKAGE_luci-i18n-base-vi=y
           CONFIG_PACKAGE_luci-i18n-firewall-vi=y
           EOF
           make defconfig
 
-      # 4. NẠP SCRIPT TỰ NHẬN 64GB EMMC VÀO BẢN ROM KHI KHỞI ĐỘNG
-      - name: Add 64GB Auto-expand script
+      # 4. SCRIPT TỰ ĐỘNG MỞ RỘNG 64GB EMMC
+      - name: Inject 64GB Auto-expand script
         run: |
           mkdir -p openwrt/package/base-files/files/etc/uci-defaults
           cat << 'EOF' > openwrt/package/base-files/files/etc/uci-defaults/99-expand-emmc
@@ -111,7 +111,7 @@ jobs:
           EOF
           chmod +x openwrt/package/base-files/files/etc/uci-defaults/99-expand-emmc
 
-      # 5. TẢI CÁC GÓI MÃ NGUỒN VỀ MÁY ẢO
+      # 5. TẢI CÁC GÓI
       - name: Download packages
         run: |
           cd openwrt
@@ -124,32 +124,32 @@ jobs:
           cd openwrt
           make -j$(nproc) || make -j1 V=s
 
-      # 7. THU GOM FILE FIRMWARE
+      # 7. QUAN TRỌNG: GOM TOÀN BỘ FILE ROM (BẤT KỂ ĐUÔI .BIN HAY .TAR)
       - name: Prepare Files
         run: |
           mkdir -p release_firmware
-          find openwrt/bin/targets/ -type f -name "*sysupgrade.bin" -exec cp -f {} release_firmware/ \;
-          find openwrt/bin/targets/ -type f -name "*factory.bin" -exec cp -f {} release_firmware/ \;
+          cd openwrt/bin/targets/qualcommax/ipq60xx/
+          # Copy tất cả các file rom ngoại trừ file kernel tạm
+          find . -maxdepth 1 -type f \( -name "*.bin" -o -name "*.tar" -o -name "*.ubi" -o -name "*.img.gz" \) ! -name "*kernel*" -exec cp -f {} $GITHUB_WORKSPACE/release_firmware/ \;
+          cd $GITHUB_WORKSPACE
+          echo "=== CÁC FILE FIRMWARE ĐÃ TẠO THÀNH CÔNG ==="
           ls -lh release_firmware/
 
       # 8. XUẤT RA ARTIFACTS
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ImmortalWrt_AX1800Pro_Full_All_Packages
+          name: ImmortalWrt_AX1800Pro_Firmware
           path: release_firmware/*
 
-      # 9. ĐẨY THẲNG RA MỤC RELEASES ĐỂ TẢI VỀ
+      # 9. XUẤT RA GITHUB RELEASES (CÓ FILE ĐÍNH KÈM CHẮC CHẮN 100%)
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: Build-Full-${{ github.run_id }}
-          name: Bản Rom Full Trọn Gói AX1800 Pro (Build ${{ github.run_number }})
+          tag_name: Build-Success-${{ github.run_id }}
+          name: Bản Rom ImmortalWrt AX1800 Pro 64GB eMMC
           body: |
-            ### BẢN FIRMWARE ĐÃ CÀI ĐẦY ĐỦ 100% MỌI TÍNH NĂNG:
-            - **Modem 4G:** atinout, sms-tool, luci-app-modemband (Khóa BTS, Khóa Band, Only 4G).
-            - **NekoBox:** Sing-box core, tproxy, bypass web VN.
-            - **AdGuard Home & Docker:** Đầy đủ luci-app-adguardhome + dockerman.
-            - **64GB eMMC:** Tự động mở rộng phân vùng 100% dung lượng khi khởi động lần đầu.
-            - **Giao diện:** Tiếng Việt + Giao diện Argon sang xịn mịn.
+            ### BẢN ROM ĐÃ SẴN SÀNG CHO ROUTER JD CLOUD AX1800 PRO:
+            - **Tải file:** Bác tải file có đuôi `*sysupgrade.bin` hoặc `*sysupgrade.tar` ở mục Assets bên dưới để nạp qua LuCI hoặc U-Boot.
+            - **Tính năng:** Đã tích hợp đầy đủ Modem 4G, NekoBox, AdGuard Home và tự nhận 64GB eMMC.
           files: release_firmware/*
