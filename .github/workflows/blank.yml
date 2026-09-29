@@ -1,4 +1,4 @@
-name: Build OpenWrt AX1800Pro Rock Solid
+name: Build ImmortalWrt AX1800Pro Final
 
 on:
   workflow_dispatch:
@@ -7,56 +7,35 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - name: 1. Dọn dẹp ổ đĩa triệt để (Tạo 50GB+ dung lượng trống)
+      - name: 1. Dọn dẹp dung lượng đĩa
         run: |
           sudo rm -rf /usr/share/dotnet /etc/mysql /etc/php /etc/apt/sources.list.d/*
           sudo rm -rf /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
           sudo docker image prune --all --force
-          sudo -E apt-get -qq update
-          sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
-            bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib \
-            git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev \
-            libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev \
-            libssl-dev libtool lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 \
-            python3-pip libpython3-dev qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs \
-            upx-ucl unzip vim wget xmlto xxd zlib1g-dev libncurses-dev
-          sudo -E apt-get -qq autoremove --purge
-          sudo -E apt-get -qq clean
-          df -h
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
+            gettext git libncurses-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget ca-certificates
+          sudo apt-get clean
 
-      - name: 2. Tải mã nguồn OpenWrt (LEDE) & Các gói ngoài
+      - name: 2. Tải mã nguồn ImmortalWrt & Khai báo Feed chuẩn
         run: |
-          git clone --depth 1 https://github.com/coolsnowwolf/lede.git openwrt
+          git clone --depth 1 -b openwrt-23.05 https://github.com/immortalwrt/immortalwrt.git openwrt
           cd openwrt
-          
-          # Clone trực tiếp các package ngoài vào package/custom (Tránh lỗi feed không nhận diện)
-          mkdir -p package/custom
-          git clone --depth 1 https://github.com/4IceG/luci-app-modemband.git package/custom/luci-app-modemband
-          git clone --depth 1 https://github.com/4IceG/luci-app-sms-tool.git package/custom/luci-app-sms-tool
-          git clone --depth 1 https://github.com/Thannhub/luci-app-nekobox.git package/custom/luci-app-nekobox
-          git clone --depth 1 https://github.com/rufengsuixing/luci-app-adguardhome.git package/custom/luci-app-adguardhome
-
-      - name: 3. Cập nhật Feeds & Nạp Go Runtime mới nhất (Fix lỗi Sing-box/Docker)
-        run: |
-          cd openwrt
+          # Thêm kho NekoBox vào feed chính thức
+          echo 'src-git nekobox https://github.com/Thannhub/luci-app-nekobox.git' >> feeds.conf.default
           ./scripts/feeds update -a
-          
-          # Nạp Go 23.x chuyên dụng cho Docker / Sing-box
-          rm -rf feeds/packages/lang/golang
-          git clone https://github.com/sbwml/packages_lang_golang -b 23.x feeds/packages/lang/golang
-          
           ./scripts/feeds install -a
 
-      - name: 4. Nạp cấu hình gói chuẩn (.config)
+      - name: 3. Nạp cấu hình gói cước đầy đủ (.config)
         run: |
           cd openwrt
           cat << 'EOF' > .config
-          # Chipset Qualcomm IPQ6000 - JD Cloud AX1800 Pro
+          # Target phần cứng: JD Cloud AX1800 Pro (Qualcomm IPQ6000)
           CONFIG_TARGET_qualcommax=y
           CONFIG_TARGET_qualcommax_ipq60xx=y
           CONFIG_TARGET_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-07=y
 
-          # Giao diện tiếng Việt & Theme Argon
+          # Giao diện Web, Tiếng Việt & Theme Argon
           CONFIG_PACKAGE_luci=y
           CONFIG_PACKAGE_luci-base=y
           CONFIG_PACKAGE_luci-compat=y
@@ -64,7 +43,7 @@ jobs:
           CONFIG_PACKAGE_luci-i18n-base-vi=y
           CONFIG_PACKAGE_luci-i18n-argon-vi=y
 
-          # 1. Driver USB Tethering (Android + iPhone)
+          # 1. Trọn bộ Driver USB Tethering (Android + iPhone)
           CONFIG_PACKAGE_kmod-usb-net=y
           CONFIG_PACKAGE_kmod-usb-net-rndis=y
           CONFIG_PACKAGE_kmod-usb-net-cdc-ether=y
@@ -74,7 +53,7 @@ jobs:
           CONFIG_PACKAGE_usbmuxd=y
           CONFIG_PACKAGE_libimobiledevice=y
 
-          # 2. Driver & Quản lý Modem 4G/5G
+          # 2. Driver & Công cụ Quản lý Modem 4G/5G
           CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y
           CONFIG_PACKAGE_kmod-usb-net-cdc-mbim=y
           CONFIG_PACKAGE_kmod-usb-serial=y
@@ -83,18 +62,16 @@ jobs:
           CONFIG_PACKAGE_usb-modeswitch=y
           CONFIG_PACKAGE_modemmanager=y
           CONFIG_PACKAGE_luci-proto-modemmanager=y
-          CONFIG_PACKAGE_mobile-broadband-provider-info=y
 
-          # 3. Quản lý sóng: Khoá Band, Khoá Cell PCI, SMS OTP
+          # 3. Quản lý sóng: Khoá Band, Khoá Cell PCI, Đọc OTP SMS
           CONFIG_PACKAGE_luci-app-modemband=y
           CONFIG_PACKAGE_luci-app-sms-tool=y
+          CONFIG_PACKAGE_sms-tool=y
           CONFIG_PACKAGE_atinout=y
           CONFIG_PACKAGE_picocom=y
 
-          # 4. Quản lý ổ đĩa, 64GB eMMC & File system
+          # 4. Quản lý ổ đĩa, 64GB eMMC & Định dạng file
           CONFIG_PACKAGE_kmod-fs-ext4=y
-          CONFIG_PACKAGE_kmod-fs-f2fs=y
-          CONFIG_PACKAGE_f2fs-tools=y
           CONFIG_PACKAGE_kmod-fs-vfat=y
           CONFIG_PACKAGE_ntfs-3g=y
           CONFIG_PACKAGE_e2fsprogs=y
@@ -127,9 +104,10 @@ jobs:
           # 9. Bảo mật, AdGuard Home & NekoBox (Sing-box)
           CONFIG_PACKAGE_luci-app-nekobox=y
           CONFIG_PACKAGE_luci-app-adguardhome=y
-          # CONFIG_PACKAGE_dnsmasq is not set
           CONFIG_PACKAGE_dnsmasq-full=y
           CONFIG_PACKAGE_ipset=y
+          CONFIG_PACKAGE_ca-bundle=y
+          CONFIG_PACKAGE_ca-certificates=y
 
           # 10. Tiện ích quản trị & Tăng tốc mạng
           CONFIG_PACKAGE_luci-app-turboacc=y
@@ -139,18 +117,13 @@ jobs:
 
           make defconfig
 
-      - name: 5. Tạo Script tự động nhận diện USB Tethering & bung eMMC an toàn
+      - name: 4. Tạo Script tự nhận USB Tethering & mở rộng 64GB eMMC
         run: |
           mkdir -p openwrt/files/etc/uci-defaults
-          mkdir -p openwrt/files/etc/sysctl.d
-          
-          # Cấu hình Swappiness an toàn cho eMMC
-          echo "vm.swappiness=10" > openwrt/files/etc/sysctl.d/99-custom.conf
-
           cat << 'EOF' > openwrt/files/etc/uci-defaults/99-init-ax1800pro.sh
           #!/bin/sh
 
-          # 1. Tự động nhận diện mạng USB từ Android (usb0) và iPhone (eth1)
+          # Tự nhận diện mạng USB từ Android (usb0) và iPhone (eth1)
           uci -q get network.tethering_android >/dev/null || {
               uci set network.tethering_android=interface
               uci set network.tethering_android.proto='dhcp'
@@ -163,38 +136,25 @@ jobs:
           }
           uci commit network
 
-          # Gán vào WAN Firewall zone
-          WAN_ZONE=$(uci show firewall | grep '=zone' | grep "name='wan'" | cut -d'.' -f2 | cut -d'=' -f1)
-          [ -n "$WAN_ZONE" ] && {
-              uci add_list firewall.${WAN_ZONE}.network='tethering_android'
-              uci add_list firewall.${WAN_ZONE}.network='tethering_iphone'
-              uci commit firewall
-          }
+          uci add_list firewall.@zone[1].network='tethering_android'
+          uci add_list firewall.@zone[1].network='tethering_iphone'
+          uci commit firewall
 
-          # 2. Bung eMMC 64GB an toàn (Hỗ trợ chuẩn xác cả EXT4 và F2FS)
-          TARGET_DEV=$(grep ' /overlay ' /proc/mounts | awk '{print $1}')
-          [ -z "$TARGET_DEV" ] && TARGET_DEV=$(df /overlay 2>/dev/null | grep '/dev/mmcblk' | awk '{print $1}')
+          # Bung eMMC an toàn (không đụng U-Boot)
+          DATA_DEV=$(mount | grep 'overlayfs:/overlay' | awk '{print $1}')
+          [ -z "$DATA_DEV" ] && DATA_DEV=$(df /overlay 2>/dev/null | tail -n1 | awk '{print $1}')
 
-          case "$TARGET_DEV" in
+          case "$DATA_DEV" in
               /dev/mmcblk0p*)
-                  DISK="/dev/mmcblk0"
-                  PART_NUM=$(echo "$TARGET_DEV" | grep -o '[0-9]*$')
-                  
-                  # Mở rộng partition lên 100% ổ eMMC
-                  parted -s "$DISK" resizepart "$PART_NUM" 100% 2>/dev/null
-                  partx -u "$TARGET_DEV" 2>/dev/null
-
-                  # Mở rộng filesystem tương ứng
-                  FS_TYPE=$(grep ' /overlay ' /proc/mounts | awk '{print $3}')
-                  if [ "$FS_TYPE" = "ext4" ]; then
-                      resize2fs "$TARGET_DEV"
-                  elif [ "$FS_TYPE" = "f2fs" ]; then
-                      resize.f2fs "$TARGET_DEV"
-                  fi
+                  PART_NUM=$(echo "$DATA_DEV" | grep -o '[0-9]*$')
+                  parted -s /dev/mmcblk0 print >/dev/null 2>&1
+                  parted -s /dev/mmcblk0 resizepart "$PART_NUM" 100%
+                  partx -u "$DATA_DEV"
+                  resize2fs "$DATA_DEV"
                   ;;
           esac
 
-          # 3. Trỏ đường dẫn lưu Docker về eMMC
+          # Trỏ Docker về eMMC
           mkdir -p /opt/docker
           uci -q get dockerd.globals >/dev/null || uci set dockerd.globals='globals'
           uci set dockerd.globals.data_root='/opt/docker'
@@ -204,22 +164,20 @@ jobs:
           EOF
           chmod -R 755 openwrt/files
 
-      - name: 6. Tải trước gói phụ thuộc (Download dl)
+      - name: 5. Tải trước các gói nguồn (Download dl)
         run: |
           cd openwrt
           make download -j8
           find dl -size -1024c -exec rm -f {} \;
 
-      - name: 7. Tiến hành Compile (Tự động chống treo luồng)
+      - name: 6. Biên dịch Firmware
         run: |
           cd openwrt
-          echo -e "$(nproc) threads compile..."
+          echo -e "$(nproc) thread compile..."
           make -j$(nproc) || make -j1 V=s
 
-      - name: 8. Xuất file ROM lên Artifacts
+      - name: 7. Xuất file ROM lên Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: OpenWrt_AX1800Pro_RockSolid
-          path: |
-            openwrt/bin/targets/qualcommax/ipq60xx/*.bin
-            openwrt/bin/targets/qualcommax/ipq60xx/*.manifest
+          name: ImmortalWrt_AX1800Pro_Verified
+          path: openwrt/bin/targets/qualcommax/ipq60xx/*.*
