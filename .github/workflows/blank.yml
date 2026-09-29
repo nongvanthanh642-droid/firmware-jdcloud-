@@ -1,4 +1,4 @@
-name: Build ImmortalWrt AX1800Pro Final
+name: Build ImmortalWrt AX1800Pro Verified
 
 on:
   workflow_dispatch:
@@ -17,12 +17,10 @@ jobs:
             gettext git libncurses-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget ca-certificates
           sudo apt-get clean
 
-      - name: 2. Tải mã nguồn ImmortalWrt & Khai báo Feed chuẩn
+      - name: 2. Tải mã nguồn ImmortalWrt
         run: |
-          git clone --depth 1 -b openwrt-23.05 https://github.com/immortalwrt/immortalwrt.git openwrt
+          git clone --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt
           cd openwrt
-          # Thêm kho NekoBox vào feed chính thức
-          echo 'src-git nekobox https://github.com/Thannhub/luci-app-nekobox.git' >> feeds.conf.default
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
@@ -53,7 +51,7 @@ jobs:
           CONFIG_PACKAGE_usbmuxd=y
           CONFIG_PACKAGE_libimobiledevice=y
 
-          # 2. Driver & Công cụ Quản lý Modem 4G/5G
+          # 2. Driver & Quản lý Modem 4G/5G chuyên dụng
           CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y
           CONFIG_PACKAGE_kmod-usb-net-cdc-mbim=y
           CONFIG_PACKAGE_kmod-usb-serial=y
@@ -63,10 +61,8 @@ jobs:
           CONFIG_PACKAGE_modemmanager=y
           CONFIG_PACKAGE_luci-proto-modemmanager=y
 
-          # 3. Quản lý sóng: Khoá Band, Khoá Cell PCI, Đọc OTP SMS
+          # 3. Quản lý sóng 4G/5G: Khoá Band, Khoá Cell PCI
           CONFIG_PACKAGE_luci-app-modemband=y
-          CONFIG_PACKAGE_luci-app-sms-tool=y
-          CONFIG_PACKAGE_sms-tool=y
           CONFIG_PACKAGE_atinout=y
           CONFIG_PACKAGE_picocom=y
 
@@ -101,8 +97,9 @@ jobs:
           CONFIG_PACKAGE_tailscale=y
           CONFIG_PACKAGE_mosquitto-ssl=y
 
-          # 9. Bảo mật, AdGuard Home & NekoBox (Sing-box)
-          CONFIG_PACKAGE_luci-app-nekobox=y
+          # 9. Bảo mật, AdGuard Home & Sing-box
+          CONFIG_PACKAGE_luci-app-sing-box=y
+          CONFIG_PACKAGE_sing-box=y
           CONFIG_PACKAGE_luci-app-adguardhome=y
           CONFIG_PACKAGE_dnsmasq-full=y
           CONFIG_PACKAGE_ipset=y
