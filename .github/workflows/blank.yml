@@ -1,169 +1,202 @@
-name: JDC-AX1800Pro-Build
+name: Build OpenWrt AX1800Pro Rock Solid
 
 on:
   workflow_dispatch:
 
-permissions: write-all
-
-env:
-  # DÙNG KHO MÃ NGUỒN CỦA VIKINGYFY - ĐÃ CÓ SẴN DRIVER CHO JD CLOUD AX1800 PRO EMMC
-  REPO_URL: https://github.com/VIKINGYFY/immortalwrt
-  REPO_BRANCH: owrt
-  TZ: Asia/Ho_Chi_Minh
-
 jobs:
-  Build:
+  build:
     runs-on: ubuntu-22.04
-
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: 1. Dọn dẹp ổ đĩa triệt để (Tạo 50GB+ dung lượng trống)
+        run: |
+          sudo rm -rf /usr/share/dotnet /etc/mysql /etc/php /etc/apt/sources.list.d/*
+          sudo rm -rf /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
+          sudo docker image prune --all --force
+          sudo -E apt-get -qq update
+          sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib \
+            git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev \
+            libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev \
+            libssl-dev libtool lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 \
+            python3-pip libpython3-dev qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs \
+            upx-ucl unzip vim wget xmlto xxd zlib1g-dev libncurses-dev
+          sudo -E apt-get -qq autoremove --purge
+          sudo -E apt-get -qq clean
+          df -h
 
-    # 1. GỘP ĐĨA 45GB
-    - name: Combine Disks
-      uses: easimon/maximize-build-space@master
-      with:
-        swap-size-mb: 4096
-        temp-reserve-mb: 100
-        root-reserve-mb: 2048
+      - name: 2. Tải mã nguồn OpenWrt (LEDE)
+        run: |
+          git clone --depth 1 https://github.com/coolsnowwolf/lede.git openwrt
 
-    # 2. CÀI MÔI TRƯỜNG
-    - name: Initialization Environment
-      env:
-        DEBIAN_FRONTEND: noninteractive
-      run: |
-        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
-        sudo apt-get -qq update
-        sudo apt-get -qq install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
-          gettext git libncurses-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget parted
-        sudo timedatectl set-timezone "$TZ"
+      - name: 3. Cập nhật Feeds & Nạp Go Runtime mới nhất (Tránh lỗi Docker/Sing-box)
+        run: |
+          cd openwrt
+          # Bổ sung các ứng dụng chuyên dụng
+          echo 'src-git modemband https://github.com/4IceG/luci-app-modemband.git' >> feeds.conf.default
+          echo 'src-git smstool https://github.com/4IceG/luci-app-sms-tool.git' >> feeds.conf.default
+          echo 'src-git nekobox https://github.com/Thannhub/luci-app-nekobox.git' >> feeds.conf.default
 
-    # 3. TẢI MÃ NGUỒN CHUẨN AX1800 PRO
-    - name: Clone Source Code
-      run: |
-        git clone -b $REPO_BRANCH --single-branch --depth 1 $REPO_URL openwrt
-        cd openwrt
-        echo "OPENWRT_PATH=$PWD" >> $GITHUB_ENV
+          ./scripts/feeds update -a
+          # Đảm bảo golang tương thích với NekoBox và Docker
+          rm -rf feeds/packages/lang/golang
+          git clone https://github.com/sbwml/packages_lang_golang -b 23.x feeds/packages/lang/golang
+          ./scripts/feeds install -a
 
-    # 4. UPDATE FEEDS
-    - name: Update Feeds
-      run: |
-        cd $OPENWRT_PATH
-        ./scripts/feeds update -a
-        ./scripts/feeds install -a
+      - name: 4. Nạp cấu hình gói chuẩn (.config)
+        run: |
+          cd openwrt
+          cat << 'EOF' > .config
+          # Chipset Qualcomm IPQ6000 - JD Cloud AX1800 Pro
+          CONFIG_TARGET_qualcommax=y
+          CONFIG_TARGET_qualcommax_ipq60xx=y
+          CONFIG_TARGET_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-07=y
 
-    # 5. NẠP CẤU HÌNH ÉP CHẶT QUALCOMM IPQ6000 AX1800 PRO
-    - name: Load Full Configuration
-      run: |
-        cd $OPENWRT_PATH
-        # Xóa sạch bất kỳ file cấu hình cũ nào
-        rm -rf .config*
-        
-        cat << 'EOF' > .config
-        # BẮT BUỘC QUALCOMM IPQ6000 - KHÔNG ĐƯỢC CHẠY X86
-        CONFIG_TARGET_qualcommax=y
-        CONFIG_TARGET_qualcommax_ipq60xx=y
-        CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-07=y
-        CONFIG_TARGET_ROOTFS_SQUASHFS=y
+          # Giao diện tiếng Việt & Theme
+          CONFIG_PACKAGE_luci=y
+          CONFIG_PACKAGE_luci-base=y
+          CONFIG_PACKAGE_luci-compat=y
+          CONFIG_PACKAGE_luci-theme-argon=y
+          CONFIG_PACKAGE_luci-i18n-base-vi=y
+          CONFIG_PACKAGE_luci-i18n-argon-vi=y
 
-        # MODEM 4G LTE, KHÓA TRẠM BTS, KHÓA BAND & USB MODESWITCH
-        CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y
-        CONFIG_PACKAGE_kmod-usb-net-cdc-ether=y
-        CONFIG_PACKAGE_kmod-usb-net-rndis=y
-        CONFIG_PACKAGE_kmod-usb-serial-option=y
-        CONFIG_PACKAGE_kmod-usb-serial=y
-        CONFIG_PACKAGE_usb-modeswitch=y
-        CONFIG_PACKAGE_uqmi=y
-        CONFIG_PACKAGE_atinout=y
-        CONFIG_PACKAGE_sms-tool=y
-        CONFIG_PACKAGE_luci-app-modemband=y
-        CONFIG_PACKAGE_comgt=y
+          # 1. Driver USB Tethering (Android + iPhone)
+          CONFIG_PACKAGE_kmod-usb-net=y
+          CONFIG_PACKAGE_kmod-usb-net-rndis=y
+          CONFIG_PACKAGE_kmod-usb-net-cdc-ether=y
+          CONFIG_PACKAGE_kmod-usb-net-cdc-ncm=y
+          CONFIG_PACKAGE_kmod-usb-net-huawei-cdc-ncm=y
+          CONFIG_PACKAGE_kmod-usb-net-ipheth=y
+          CONFIG_PACKAGE_usbmuxd=y
+          CONFIG_PACKAGE_libimobiledevice=y
 
-        # MẠNG & CHỨNG CHỈ SSL
-        CONFIG_PACKAGE_ca-bundle=y
-        CONFIG_PACKAGE_ca-certificates=y
-        CONFIG_PACKAGE_curl=y
-        CONFIG_PACKAGE_kmod-tun=y
-        CONFIG_PACKAGE_iptables-mod-tproxy=y
-        CONFIG_PACKAGE_ipset=y
+          # 2. Driver & Công cụ Quản lý Modem 4G/5G
+          CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y
+          CONFIG_PACKAGE_kmod-usb-net-cdc-mbim=y
+          CONFIG_PACKAGE_kmod-usb-serial=y
+          CONFIG_PACKAGE_kmod-usb-serial-option=y
+          CONFIG_PACKAGE_kmod-usb-serial-wwan=y
+          CONFIG_PACKAGE_usb-modeswitch=y
+          CONFIG_PACKAGE_modemmanager=y
+          CONFIG_PACKAGE_luci-proto-modemmanager=y
+          CONFIG_PACKAGE_mobile-broadband-provider-info=y
 
-        # QUẢN LÝ 64GB EMMC
-        CONFIG_PACKAGE_parted=y
-        CONFIG_PACKAGE_e2fsprogs=y
-        CONFIG_PACKAGE_resize2fs=y
-        CONFIG_PACKAGE_fdisk=y
-        CONFIG_PACKAGE_block-mount=y
-        CONFIG_PACKAGE_kmod-fs-ext4=y
+          # 3. Quản lý sóng: Khoá Band, Khoá Cell PCI, SMS OTP
+          CONFIG_PACKAGE_luci-app-modemband=y
+          CONFIG_PACKAGE_luci-app-sms-tool=y
+          CONFIG_PACKAGE_atinout=y
+          CONFIG_PACKAGE_picocom=y
 
-        # GIAO DIỆN TIẾNG VIỆT & ARGON
-        CONFIG_PACKAGE_luci=y
-        CONFIG_PACKAGE_luci-theme-argon=y
-        CONFIG_PACKAGE_luci-i18n-base-vi=y
-        CONFIG_PACKAGE_luci-i18n-firewall-vi=y
-        EOF
+          # 4. Quản lý ổ đĩa, 64GB eMMC & Định dạng file
+          CONFIG_PACKAGE_kmod-fs-ext4=y
+          CONFIG_PACKAGE_kmod-fs-vfat=y
+          CONFIG_PACKAGE_ntfs-3g=y
+          CONFIG_PACKAGE_e2fsprogs=y
+          CONFIG_PACKAGE_parted=y
+          CONFIG_PACKAGE_resize2fs=y
+          CONFIG_PACKAGE_fdisk=y
+          CONFIG_PACKAGE_block-mount=y
+          CONFIG_PACKAGE_luci-app-diskman=y
 
-        make defconfig
-        echo "=== XÁC MINH TARGET CHÍNH XÁC ==="
-        grep -E "CONFIG_TARGET_qualcommax|CONFIG_TARGET_DEVICE.*jdcloud" .config
+          # 5. Tối ưu bộ nhớ: zRAM chống tràn RAM 512MB
+          CONFIG_PACKAGE_kmod-zram=y
+          CONFIG_PACKAGE_zram-swap=y
 
-    # 6. SCRIPT TỰ ĐỘNG MỞ RỘNG 64GB EMMC
-    - name: Inject 64GB Auto-expand script
-      run: |
-        mkdir -p $OPENWRT_PATH/package/base-files/files/etc/uci-defaults
-        cat << 'EOF' > $OPENWRT_PATH/package/base-files/files/etc/uci-defaults/99-expand-emmc
-        #!/bin/sh
-        if [ ! -f /etc/emmc_expanded.done ]; then
-            logger -t emmc "Auto fixing GPT and expanding 64GB eMMC..."
-            parted -s /dev/mmcblk0 ---pretend-input-point-at-end print Fix 2>/dev/null || true
-            parted -s /dev/mmcblk0 resizepart 3 100% 2>/dev/null || true
-            resize2fs /dev/mmcblk0p3 2>/dev/null || true
-            touch /etc/emmc_expanded.done
-        fi
-        exit 0
-        EOF
-        chmod +x $OPENWRT_PATH/package/base-files/files/etc/uci-defaults/99-expand-emmc
+          # 6. Cân bằng tải Đa WAN & Giám sát băng thông
+          CONFIG_PACKAGE_mwan3=y
+          CONFIG_PACKAGE_luci-app-mwan3=y
+          CONFIG_PACKAGE_nlbwmon=y
+          CONFIG_PACKAGE_luci-app-nlbwmon=y
 
-    # 7. TẢI CÁC GÓI
-    - name: Download packages
-      run: |
-        cd $OPENWRT_PATH
-        make download -j8
-        find dl -size -1024c -exec rm -f {} \;
+          # 7. Docker CE
+          CONFIG_PACKAGE_dockerd=y
+          CONFIG_PACKAGE_docker-compose=y
+          CONFIG_PACKAGE_luci-app-dockerman=y
+          CONFIG_PACKAGE_cgroupfs-mount=y
 
-    # 8. BIÊN DỊCH FIRMWARE
-    - name: Compile Firmware
-      id: compile
-      run: |
-        cd $OPENWRT_PATH
-        echo -e "$(nproc) thread compile"
-        make -j$(nproc) || make -j1 || make -j1 V=s
-        echo "status=success" >> $GITHUB_OUTPUT
-        echo "DATE=$(date +"%Y-%m-%d %H:%M:%S")" >> $GITHUB_ENV
-        echo "FILE_DATE=$(date +"%Y.%m.%d")" >> $GITHUB_ENV
+          # 8. Mạng Mesh VPN & Smart Home
+          CONFIG_PACKAGE_tailscale=y
+          CONFIG_PACKAGE_mosquitto-ssl=y
 
-    # 9. GOM ĐÚNG FILE ROM QUALCOMM CHO AX1800 PRO
-    - name: Organize Files
-      if: steps.compile.outputs.status == 'success'
-      run: |
-        mkdir -p $GITHUB_WORKSPACE/firmware_output
-        find $OPENWRT_PATH/bin/targets/qualcommax/ -type f \( -name "*sysupgrade*" -o -name "*factory*" -o -name "*ubi*" \) -exec cp -f {} $GITHUB_WORKSPACE/firmware_output/ \;
-        cd $GITHUB_WORKSPACE/firmware_output
-        echo "=== CÁC FILE CHO JD CLOUD AX1800 PRO ĐÃ RA LÒ ==="
-        ls -lh
+          # 9. Bảo mật, AdGuard Home & NekoBox (Sing-box)
+          CONFIG_PACKAGE_luci-app-nekobox=y
+          CONFIG_PACKAGE_luci-app-adguardhome=y
+          CONFIG_PACKAGE_dnsmasq-full=y
+          CONFIG_PACKAGE_ipset=y
 
-    # 10. ĐẨY RA MỤC RELEASES
-    - name: Publish to GitHub Releases
-      if: steps.compile.outputs.status == 'success'
-      uses: ncipollo/release-action@v1
-      with:
-        name: Bản Rom Chuẩn JD Cloud AX1800 Pro (Build ${{ env.FILE_DATE }})
-        tag: JDC-AX1800Pro-${{ env.FILE_DATE }}-${{ github.run_number }}
-        token: ${{ secrets.GITHUB_TOKEN }}
-        artifacts: ${{ github.workspace }}/firmware_output/*
-        body: |
-          ### 🚀 BẢN FIRMWARE CHUẨN XÁC CHO ROUTER JD CLOUD AX1800 PRO:
-          - **Thiết bị:** JD Cloud AX1800 Pro (Qualcomm IPQ6000 / RE-CS-07)
-          - **Tập tin:** Tải file có chữ `*jdcloud_re-cs-07*sysupgrade.bin` bên dưới để flash vào Router.
-          - **Modem 4G:** Khóa BTS, Khóa Band, Only 4G, Tự nhận diện USB Modem.
-          - **Bộ nhớ:** Tự động mở rộng 100% dung lượng 64GB eMMC.
-          - **Giao diện:** Tiếng Việt + Argon Theme (IP: 192.168.1.1, không pass).
+          # 10. Tiện ích quản trị & Tăng tốc mạng
+          CONFIG_PACKAGE_luci-app-turboacc=y
+          CONFIG_PACKAGE_luci-app-ttyd=y
+          CONFIG_PACKAGE_zoneinfo-asia=y
+          EOF
+
+          make defconfig
+
+      - name: 5. Tạo Script tự động nhận diện USB Tethering & bung eMMC an toàn
+        run: |
+          mkdir -p openwrt/files/etc/uci-defaults
+          mkdir -p openwrt/files/etc/sysctl.d
+          
+          # Cấu hình Swappiness an toàn cho eMMC
+          echo "vm.swappiness=10" > openwrt/files/etc/sysctl.d/99-custom.conf
+
+          cat << 'EOF' > openwrt/files/etc/uci-defaults/99-init-ax1800pro.sh
+          #!/bin/sh
+
+          # Tự động nhận diện mạng USB từ Android (usb0) và iPhone (eth1)
+          uci -q get network.tethering_android >/dev/null || {
+              uci set network.tethering_android=interface
+              uci set network.tethering_android.proto='dhcp'
+              uci set network.tethering_android.device='usb0'
+          }
+          uci -q get network.tethering_iphone >/dev/null || {
+              uci set network.tethering_iphone=interface
+              uci set network.tethering_iphone.proto='dhcp'
+              uci set network.tethering_iphone.device='eth1'
+          }
+          uci commit network
+
+          uci add_list firewall.@zone[1].network='tethering_android'
+          uci add_list firewall.@zone[1].network='tethering_iphone'
+          uci commit firewall
+
+          # Bung eMMC an toàn: tự động tìm đúng phân vùng overlay/data cuối cùng
+          DATA_DEV=$(mount | grep 'overlayfs:/overlay' | awk '{print $1}')
+          [ -z "$DATA_DEV" ] && DATA_DEV=$(df /overlay 2>/dev/null | tail -n1 | awk '{print $1}')
+
+          case "$DATA_DEV" in
+              /dev/mmcblk0p*)
+                  PART_NUM=$(echo "$DATA_DEV" | grep -o '[0-9]*$')
+                  parted -s /dev/mmcblk0 print >/dev/null 2>&1
+                  parted -s /dev/mmcblk0 resizepart "$PART_NUM" 100%
+                  partx -u "$DATA_DEV"
+                  resize2fs "$DATA_DEV"
+                  ;;
+          esac
+
+          # Trỏ Docker về /opt/docker trên eMMC
+          mkdir -p /opt/docker
+          uci -q get dockerd.globals >/dev/null || uci set dockerd.globals='globals'
+          uci set dockerd.globals.data_root='/opt/docker'
+          uci commit dockerd
+
+          exit 0
+          EOF
+          chmod -R 755 openwrt/files
+
+      - name: 6. Tải trước gói phụ thuộc (Download dl)
+        run: |
+          cd openwrt
+          make download -j8
+          find dl -size -1024c -exec rm -f {} \;
+
+      - name: 7. Tiến hành Compile (Tự động chống treo luồng)
+        run: |
+          cd openwrt
+          echo -e "$(nproc) threads compile..."
+          make -j$(nproc) || make -j1 V=s
+
+      - name: 8. Xuất file ROM lên Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenWrt_AX1800Pro_RockSolid
+          path: openwrt/bin/targets/qualcommax/ipq60xx/*.*
